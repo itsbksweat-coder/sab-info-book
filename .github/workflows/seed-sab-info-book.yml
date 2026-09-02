@@ -1,0 +1,72 @@
+name: Seed SAB Info Book
+
+on:
+  push:
+    paths:
+      - ".github/workflows/seed-sab-info-book.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild readable Info Book
+        shell: bash
+        run: |
+          cat \
+            .seed/decoded-000.b64 \
+            .seed/decoded-r-000.b64 \
+            .seed/decoded2-000.b64 \
+            .seed/dec-000.b64 \
+            .seed/dec8-000.b64 \
+            .seed/dec8-001.b64 \
+            .seed/dec8-002.b64 \
+            .seed/rdec-000.b64 \
+            .seed/rdec-001.b64 \
+            .seed/rdec-002.b64 \
+            | base64 -d | gzip -d > SAB-info-book-DECODED.txt
+
+      - name: Rebuild Workmode source
+        shell: python
+        run: |
+          from pathlib import Path
+          import base64, gzip, re
+
+          parts = [
+              ".seed/tpl-000.b64",
+              ".seed/tpl-001.b64",
+              ".seed/tpl-002.b64",
+              ".seed/tpl-003.b64",
+              ".seed/tpl-004.b64",
+              ".seed/tpl-005.b64",
+          ]
+          packed = "".join(Path(p).read_text().strip() for p in parts)
+          template = gzip.decompress(base64.b64decode(packed)).decode("utf-8")
+
+          decoded = Path("SAB-info-book-DECODED.txt").read_text(encoding="utf-8")
+          embedded = base64.b64encode(decoded.encode("utf-8")).decode("ascii")
+          source = template.replace("__B64__", embedded, 1)
+
+          m = re.search(r'const EMBEDDED_INFO_BOOK_B64 = "([A-Za-z0-9+/=]+)";', source)
+          assert m, "Embedded Base64 constant missing"
+          assert base64.b64decode(m.group(1)).decode("utf-8") == decoded
+
+          Path("SAB-info-book.txt").write_text(source, encoding="utf-8")
+
+      - name: Commit stable files
+        shell: bash
+        run: |
+          git config user.name "SAB Info Book Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add SAB-info-book-DECODED.txt SAB-info-book.txt
+          if git diff --cached --quiet; then
+            echo "No stable-file changes."
+            exit 0
+          fi
+          git commit -m "Seed latest SAB Info Book v8"
+          git push
