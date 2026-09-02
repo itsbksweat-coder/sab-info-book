@@ -70,3 +70,5 @@ jobs:
           fi
           git commit -m "Seed latest SAB Info Book v8"
           git push
+
+# seed data ready
