@@ -1,0 +1,3864 @@
+--========================================================
+-- ETERNAL AUTO EXIST COUNT - STANDALONE
+-- Extracted from Eternal Redeemer v83.
+--
+-- Automatically opens the in-game Index, scans mutation/Brainrot
+-- exist counts, caches them, and ends on Normal/Default.
+--
+-- Main APIs after the scan:
+--   _G.EternalRedeemerMutationExists("Gold", "Strawberry Elephant")
+--   _G.EternalRedeemerMutationExists("Normal", "Strawberry Elephant")
+--   _G.EternalRedeemerMutationExists("Gold") -- returns all Gold counts
+--   _G.EternalRedeemerMutationExistsStatus()
+--   _G.EternalRedeemerExistCache()
+--   _G.EternalRedeemerRefreshMutationExists()
+--   _G.EternalExistWebSocketStatus()
+--   _G.EternalExistWebSocketReconnect()
+--
+-- Full raw state:
+--   _G.__ETERNALHUB_MUTATION_EXISTS
+--
+-- Optional WebSocket dashboard bridge (set before execution):
+--   getgenv().EternalExistWebSocketEnabled = true
+--   getgenv().EternalExistWebSocketURL = "ws://127.0.0.1:8787"
+--   getgenv().EternalExistWebSocketRoom = "eternal"
+--   getgenv().EternalExistWebSocketToken = "change-me"
+--========================================================
+
+repeat task.wait() until game:IsLoaded()
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- Standalone execution generation. Re-executing this file invalidates the
+-- previous scanner without touching the full Eternal Redeemer generation.
+_G.__ETERNAL_EXIST_SCAN_GENERATION =
+    (_G.__ETERNAL_EXIST_SCAN_GENERATION or 0) + 1
+
+local ETERNALHUB_EXECUTION_GENERATION =
+    _G.__ETERNAL_EXIST_SCAN_GENERATION
+
+local function isCurrentEternalHubExecution()
+    return _G.__ETERNAL_EXIST_SCAN_GENERATION
+        == ETERNALHUB_EXECUTION_GENERATION
+end
+
+-- Protected-call helper used throughout the extracted scanner.
+local function safeCall(callback, ...)
+    return pcall(callback, ...)
+end
+
+-- The original scanner temporarily disabled Eternal Redeemer's ScreenGui.
+-- A tiny standalone stub preserves that code path without requiring the GUI.
+local EternalHubAutoRedeemer = {
+    Enabled = true,
+}
+
+-- Replace the redeemer's on-screen history logger with console output.
+local function logHistory(message, kind)
+    print("[Eternal Exist Scanner] " .. tostring(message))
+end
+
+-- Fresh cache for this standalone execution.
+_G.__ETERNALHUB_MUTATION_EXISTS = {
+    generation = ETERNALHUB_EXECUTION_GENERATION,
+    ready = false,
+    scanning = false,
+    values = {},
+    raw = {},
+    records = {},
+    errors = {},
+    Mutations = {},
+    Brainrots = {},
+    TotalBrainrots = nil,
+    TotalRaw = nil,
+    scannedNames = {},
+    clickedMutations = 0,
+    foundImages = 0,
+    hoverAttempts = 0,
+    hoveredImages = 0,
+    capturedCounts = 0,
+    directCaptures = 0,
+    physicalFallbacks = 0,
+    burstMisses = 0,
+    scanDuration = 0,
+    scannedAt = nil,
+    error = nil,
+}
+
+-- STARTUP MUTATION EXISTS INDEX SCAN
+-- Opens the game's Index through its existing button connections, clicks each
+-- mutation Button, stacks each mutation's cards at one GUI point, resolves the
+-- real connected card hitbox/button/overlay and exhausts no-input paths:
+-- getconnections Function calls, connection:Fire, firesignal, selection,
+-- property listeners, callback upvalues/controller methods, then targeted
+-- getgc Index/Popup/Exists closures as the final miss fallback.
+-- No VirtualInputManager or cursor movement is used.
+-- GuiService selection, or cursor movement is used. Reads Popup.Infos.Exists.Label
+-- synchronously and finishes on Normal/Default. Template and
+-- layout-only entries are skipped; the Index remains open when scanning ends.
+-- ==========================================
+-- Keep all scanner helpers inside a spawned function so they do not consume
+-- the already-tight top-level Luau register pool.
+task.spawn(function()
+    -- Most Index hover handlers update Exists.Label synchronously. Read those
+    -- immediately and spend frames only on entries that actually need them.
+    local directRetryFrames = 0
+    local signalRetryFrames = 2
+    local runService =
+        game:GetService(
+            "RunService"
+        )
+
+    local guiService =
+        game:GetService(
+            "GuiService"
+        )
+
+    local ignoredMutationObjects = {
+        ["template"] = true,
+        ["padding"] = true,
+        ["uilistlayout"] = true,
+        ["uipadding"] = true,
+    }
+
+    local function trimIndexText(value)
+        value =
+            tostring(
+                value or ""
+            )
+
+        value =
+            string.gsub(
+                value,
+                "<[^<>]+>",
+                ""
+            )
+
+        return string.match(
+            value,
+            "^%s*(.-)%s*$"
+        )
+        or value
+    end
+
+    local function compactIndexName(value)
+        return string.gsub(
+            string.lower(
+                tostring(
+                    value or ""
+                )
+            ),
+            "[^%w]",
+            ""
+        )
+    end
+
+    local function fireExistingSignal(
+        signal,
+        ...
+    )
+        if signal == nil then
+            return false
+        end
+
+        local arguments =
+            table.pack(...)
+
+        local fired = false
+
+        if typeof(getconnections) == "function" then
+            local gotConnections,
+                connections =
+                safeCall(function()
+                    return getconnections(
+                        signal
+                    )
+                end)
+
+            if gotConnections
+                and type(connections) == "table" then
+                for _, connection in ipairs(
+                    connections
+                ) do
+                    local usedConnection = false
+
+                    local connectionWorked =
+                        safeCall(function()
+                            if typeof(connection.Fire) == "function" then
+                                connection:Fire(
+                                    table.unpack(
+                                        arguments,
+                                        1,
+                                        arguments.n
+                                    )
+                                )
+
+                                usedConnection = true
+                            elseif typeof(connection.Function) == "function" then
+                                connection.Function(
+                                    table.unpack(
+                                        arguments,
+                                        1,
+                                        arguments.n
+                                    )
+                                )
+
+                                usedConnection = true
+                            end
+                        end)
+
+                    if connectionWorked
+                        and usedConnection then
+                        fired = true
+                    end
+                end
+            end
+        end
+
+        if not fired
+            and typeof(firesignal) == "function" then
+
+            fired =
+                safeCall(function()
+                    firesignal(
+                        signal,
+                        table.unpack(
+                            arguments,
+                            1,
+                            arguments.n
+                        )
+                    )
+                end)
+        end
+
+        return fired
+    end
+
+    local function forceGuiTreeVisible(
+        guiObject,
+        stopAt
+    )
+        local current = guiObject
+
+        while current do
+            if current:IsA("GuiObject") then
+                if current.Visible ~= true then
+                    safeCall(function()
+                        current.Visible = true
+                    end)
+                end
+
+                if current:IsA("GuiButton") then
+                    if current.Active ~= true then
+                        safeCall(function()
+                            current.Active = true
+                        end)
+                    end
+
+                    safeCall(function()
+                        if current.Interactable ~= true then
+                            current.Interactable = true
+                        end
+                    end)
+                end
+            end
+
+            if current == stopAt then
+                break
+            end
+
+            current = current.Parent
+        end
+    end
+
+    local function activateIndexButton(button)
+        if not button
+            or not button:IsA("GuiButton") then
+            return false
+        end
+
+        forceGuiTreeVisible(
+            button
+        )
+
+        -- Use the first signal that actually has callable connections so the
+        -- same click cannot toggle the Index twice.
+        if fireExistingSignal(
+            button.MouseButton1Click
+        ) then
+            return true,
+                "MouseButton1Click"
+        end
+
+        if fireExistingSignal(
+            button.Activated
+        ) then
+            return true,
+                "Activated"
+        end
+
+        return false,
+            nil
+    end
+
+    local function indexIsVisible(
+        indexGui,
+        indexPanel
+    )
+        if indexGui:IsA("ScreenGui")
+            and indexGui.Enabled ~= true then
+            return false
+        end
+
+        if indexPanel:IsA("GuiObject") then
+            return indexPanel.Visible == true
+        end
+
+        return true
+    end
+
+    local function waitForIndexVisibility(
+        indexGui,
+        indexPanel,
+        wantedVisible,
+        maxSteps
+    )
+        maxSteps =
+            tonumber(maxSteps)
+            or 100
+
+        for _ = 1, maxSteps do
+            if indexIsVisible(
+                indexGui,
+                indexPanel
+            ) == wantedVisible then
+                return true
+            end
+
+            runService.RenderStepped:Wait()
+        end
+
+        return indexIsVisible(
+            indexGui,
+            indexPanel
+        ) == wantedVisible
+    end
+
+    local function addUniqueEntry(
+        orderedEntries,
+        seenEntries,
+        entry
+    )
+        if not entry
+            or ignoredMutationObjects[
+                string.lower(entry.Name)
+            ]
+            or seenEntries[entry] then
+            return
+        end
+
+        local button =
+            entry:FindFirstChild(
+                "Button"
+            )
+
+        if not button
+            or not button:IsA("GuiButton") then
+            return
+        end
+
+        seenEntries[entry] = true
+
+        table.insert(
+            orderedEntries,
+            entry
+        )
+    end
+
+    local function getOrderedMutationEntries(
+        mutationsRoot
+    )
+        local children =
+            mutationsRoot:GetChildren()
+
+        local orderedEntries = {}
+        local seenEntries = {}
+
+        -- Read every real mutation dynamically, including future additions.
+        for _, child in ipairs(children) do
+            addUniqueEntry(
+                orderedEntries,
+                seenEntries,
+                child
+            )
+        end
+
+        table.sort(
+            orderedEntries,
+            function(a, b)
+                local aOrder =
+                    a:IsA("GuiObject")
+                    and a.LayoutOrder
+                    or 0
+
+                local bOrder =
+                    b:IsA("GuiObject")
+                    and b.LayoutOrder
+                    or 0
+
+                if aOrder == bOrder then
+                    return string.lower(a.Name)
+                        < string.lower(b.Name)
+                end
+
+                return aOrder < bOrder
+            end
+        )
+
+        return orderedEntries
+    end
+
+    local function clickMutationEntry(entry)
+        local button =
+            entry:FindFirstChild(
+                "Button"
+            )
+
+        if not button
+            or not button:IsA("GuiButton") then
+            return false
+        end
+
+        forceGuiTreeVisible(
+            entry,
+            entry.Parent
+        )
+
+        forceGuiTreeVisible(
+            button,
+            entry.Parent
+        )
+
+        -- MOBILE-SAFE MUTATION SWITCHING:
+        -- Some modded mobile executors expose several duplicate connections for
+        -- the same button. Firing all of them (and then Activated too) can run the
+        -- mutation refresh many times and crash the client. Fire ONE usable
+        -- connection only, preferring MouseButton1Click.
+        local function fireOneConnection(signal)
+            if typeof(getconnections) ~= "function" then
+                return false
+            end
+
+            local ok, connections = safeCall(function()
+                return getconnections(signal)
+            end)
+
+            if not ok or type(connections) ~= "table" then
+                return false
+            end
+
+            for _, connection in ipairs(connections) do
+                local used = false
+
+                safeCall(function()
+                    if typeof(connection.Fire) == "function" then
+                        connection:Fire()
+                        used = true
+                    elseif typeof(connection.Function) == "function" then
+                        connection.Function()
+                        used = true
+                    end
+                end)
+
+                if used then
+                    return true
+                end
+            end
+
+            return false
+        end
+
+        local fired = fireOneConnection(button.MouseButton1Click)
+
+        if not fired then
+            fired = fireOneConnection(button.Activated)
+        end
+
+        -- Only one fallback signal as well; never fire both on mobile.
+        if not fired and typeof(firesignal) == "function" then
+            fired = safeCall(function()
+                firesignal(button.MouseButton1Click)
+            end)
+        end
+
+        return fired
+    end
+
+    local function getResultImageLabels(
+        brainrotList
+    )
+        local images = {}
+
+        forceGuiTreeVisible(
+            brainrotList
+        )
+
+        for _, descendant in ipairs(
+            brainrotList:GetDescendants()
+        ) do
+            local current = descendant
+            local insideTemplate = false
+
+            while current
+                and current ~= brainrotList do
+                if string.lower(current.Name)
+                    == "template" then
+                    insideTemplate = true
+                    break
+                end
+
+                current = current.Parent
+            end
+
+            if descendant:IsA("ImageLabel")
+                and not insideTemplate then
+
+                forceGuiTreeVisible(
+                    descendant,
+                    brainrotList
+                )
+
+                table.insert(
+                    images,
+                    descendant
+                )
+            end
+        end
+
+        return images
+    end
+
+    local ignoredItemNames = {
+        ["background"] = true,
+        ["button"] = true,
+        ["container"] = true,
+        ["content"] = true,
+        ["entry"] = true,
+        ["frame"] = true,
+        ["grid"] = true,
+        ["holder"] = true,
+        ["icon"] = true,
+        ["image"] = true,
+        ["imagelabel"] = true,
+        ["item"] = true,
+        ["items"] = true,
+        ["list"] = true,
+        ["main"] = true,
+        ["card"] = true,
+        ["cell"] = true,
+        ["scroll"] = true,
+        ["scrollingframe"] = true,
+        ["template"] = true,
+        ["common"] = true,
+        ["rare"] = true,
+        ["epic"] = true,
+        ["legendary"] = true,
+        ["mythic"] = true,
+        ["brainrotgod"] = true,
+        ["secret"] = true,
+        ["og"] = true,
+        ["locked"] = true,
+        ["unlocked"] = true,
+    }
+
+    local function usableItemName(value)
+        value =
+            trimIndexText(
+                value
+            )
+
+        local compact =
+            compactIndexName(
+                value
+            )
+
+        if compact == ""
+            or ignoredItemNames[compact]
+            or string.match(compact, "^%d+$")
+            or string.match(
+                string.lower(value),
+                "^%$[%d,%.]+[%a]*$"
+            )
+            or string.match(
+                string.lower(value),
+                "^[%d,%.]+%s*[kmbtq]*%s*/?%s*[ps]$"
+            )
+            or string.find(
+                string.lower(value),
+                "exist",
+                1,
+                true
+            ) then
+            return nil
+        end
+
+        return value
+    end
+
+    local function inferResultItemName(
+        imageLabel,
+        brainrotList,
+        fallbackIndex
+    )
+        local cardRoot = imageLabel
+
+        while cardRoot.Parent
+            and cardRoot.Parent ~= brainrotList do
+            cardRoot = cardRoot.Parent
+        end
+
+        local attributeNames = {
+            "BrainrotName",
+            "DisplayName",
+            "Brainrot",
+            "ItemName",
+            "Name",
+        }
+
+        -- Prefer explicit card metadata because it stays stable when the
+        -- visual hierarchy uses generic names such as Frame or ImageLabel.
+        for _, object in ipairs({
+            cardRoot,
+            imageLabel,
+        }) do
+            for _, attributeName in ipairs(
+                attributeNames
+            ) do
+                local candidate =
+                    usableItemName(
+                        object:GetAttribute(
+                            attributeName
+                        )
+                    )
+
+                if candidate then
+                    return candidate
+                end
+            end
+        end
+
+        for _, descendant in ipairs(
+            cardRoot:GetDescendants()
+        ) do
+            for _, attributeName in ipairs(
+                attributeNames
+            ) do
+                local candidate =
+                    usableItemName(
+                        descendant:GetAttribute(
+                            attributeName
+                        )
+                    )
+
+                if candidate then
+                    return candidate
+                end
+            end
+        end
+
+        -- Otherwise use the longest plausible TextLabel on the card.
+        local textCandidates = {}
+
+        if cardRoot then
+            for _, descendant in ipairs(
+                cardRoot:GetDescendants()
+            ) do
+                if descendant:IsA("TextLabel")
+                    or descendant:IsA("TextButton") then
+                    local candidate =
+                        usableItemName(
+                            descendant.ContentText
+                        )
+
+                    if candidate
+                        and not string.find(
+                            string.lower(candidate),
+                            "exist",
+                            1,
+                            true
+                        ) then
+                        local exactLookup =
+                            _G.__ETERNALHUB_LITERAL_BRAINROT_LOOKUP
+
+                        if type(exactLookup) == "table"
+                            and exactLookup[
+                                normalizeDirectClue(
+                                    candidate
+                                )
+                            ] ~= nil then
+                            return candidate
+                        end
+
+                        table.insert(
+                            textCandidates,
+                            candidate
+                        )
+                    end
+                end
+            end
+        end
+
+        if #textCandidates > 0 then
+            table.sort(
+                textCandidates,
+                function(a, b)
+                    return #a > #b
+                end
+            )
+
+            return textCandidates[1]
+        end
+
+        -- Last metadata fallback: use the first non-generic instance name
+        -- between the hovered image and its card root.
+        local current = imageLabel
+
+        while current
+            and current ~= brainrotList do
+            local candidate =
+                usableItemName(
+                    current.Name
+                )
+
+            if candidate then
+                return candidate
+            end
+
+            current = current.Parent
+        end
+
+        return "IndexItem"
+            .. tostring(
+                fallbackIndex
+            )
+    end
+
+    local function scrollGuiObjectIntoView(
+        guiObject,
+        stopAt,
+        savedScrollPositions
+    )
+        local current = guiObject.Parent
+
+        while current do
+            if current:IsA("ScrollingFrame") then
+                if savedScrollPositions[current] == nil then
+                    savedScrollPositions[current] =
+                        current.CanvasPosition
+                end
+
+                local objectCenter =
+                    guiObject.AbsolutePosition
+                    + guiObject.AbsoluteSize / 2
+
+                local viewportCenter =
+                    current.AbsolutePosition
+                    + current.AbsoluteSize / 2
+
+                local delta =
+                    objectCenter
+                    - viewportCenter
+
+                local maximum =
+                    Vector2.new(
+                        math.max(
+                            0,
+                            current.AbsoluteCanvasSize.X
+                                - current.AbsoluteSize.X
+                        ),
+                        math.max(
+                            0,
+                            current.AbsoluteCanvasSize.Y
+                                - current.AbsoluteSize.Y
+                        )
+                    )
+
+                local wanted =
+                    current.CanvasPosition
+                    + delta
+
+                safeCall(function()
+                    current.CanvasPosition =
+                        Vector2.new(
+                            math.clamp(
+                                wanted.X,
+                                0,
+                                maximum.X
+                            ),
+                            math.clamp(
+                                wanted.Y,
+                                0,
+                                maximum.Y
+                            )
+                        )
+                end)
+
+            end
+
+            if current == stopAt then
+                break
+            end
+
+            current = current.Parent
+        end
+    end
+
+    local function hoverGuiObject(
+        guiObject,
+        brainrotList,
+        savedScrollPositions
+    )
+        if not guiObject
+            or not guiObject:IsA("GuiObject") then
+            return false
+        end
+
+        forceGuiTreeVisible(
+            guiObject,
+            brainrotList
+        )
+
+        -- CanvasPosition is changed directly only to make lazy-loaded card
+        -- handlers available. No mouse/input service is used.
+        scrollGuiObjectIntoView(
+            guiObject,
+            brainrotList,
+            savedScrollPositions
+        )
+
+        local center =
+            guiObject.AbsolutePosition
+            + guiObject.AbsoluteSize / 2
+
+        local entered =
+            fireExistingSignal(
+                guiObject.MouseEnter,
+                center.X,
+                center.Y
+            )
+
+        local mouseMoved =
+            fireExistingSignal(
+                guiObject.MouseMoved,
+                center.X,
+                center.Y
+            )
+
+        return entered
+            or mouseMoved
+    end
+
+    local function directHoverGuiObject(guiObject)
+        if not guiObject
+            or not guiObject:IsA("GuiObject") then
+            return false
+        end
+
+        local center =
+            guiObject.AbsolutePosition
+            + guiObject.AbsoluteSize / 2
+
+        -- The connected hover callback usually writes Exists.Label in this
+        -- same thread, so try it without scrolling or moving the real cursor.
+        local entered =
+            fireExistingSignal(
+                guiObject.MouseEnter,
+                center.X,
+                center.Y
+            )
+
+        local mouseMoved =
+            fireExistingSignal(
+                guiObject.MouseMoved,
+                center.X,
+                center.Y
+            )
+
+        return entered
+            or mouseMoved
+    end
+
+    local function readExistsLabel(label)
+        local raw =
+            trimIndexText(
+                label.ContentText
+            )
+
+        if raw == "" then
+            raw =
+                trimIndexText(
+                    label.Text
+                )
+        end
+
+        local lowerRaw =
+            string.lower(
+                raw
+            )
+
+        -- Read the number directly attached to "Exist/Exists" so unrelated
+        -- popup counters such as "1/3" can never become the cached answer.
+        local number =
+            string.match(
+                lowerRaw,
+                "exists?[^%d]*([%d][%d,]*)"
+            )
+
+        if not number then
+            number =
+                string.match(
+                    lowerRaw,
+                    "([%d][%d,]*)%s*exists?"
+                )
+        end
+
+        if not number then
+            number =
+                string.match(
+                    lowerRaw,
+                    "^%s*([%d][%d,]*)%s*$"
+                )
+        end
+
+        if number then
+            return string.gsub(
+                number,
+                ",",
+                ""
+            ),
+                raw
+        end
+
+        if lowerRaw == "none"
+            or string.find(
+                lowerRaw,
+                "none exist",
+                1,
+                true
+            ) then
+            return "0",
+                raw
+        end
+
+        return nil,
+            raw
+    end
+
+    local function readTotalLabel(label)
+        local raw =
+            trimIndexText(
+                label.ContentText
+            )
+
+        if raw == "" then
+            raw =
+                trimIndexText(
+                    label.Text
+                )
+        end
+
+        -- Header.Total commonly renders "found / total". Prefer the value
+        -- after the slash, then fall back to the final number in the label.
+        local number =
+            string.match(
+                raw,
+                "/%s*([%d][%d,]*)"
+            )
+
+        if not number then
+            number =
+                string.match(
+                    raw,
+                    "([%d][%d,]*)%s*$"
+                )
+        end
+
+        if not number then
+            number =
+                string.match(
+                    raw,
+                    "([%d][%d,]*)"
+                )
+        end
+
+        if number then
+            number =
+                string.gsub(
+                    number,
+                    ",",
+                    ""
+                )
+        end
+
+        return number,
+            raw
+    end
+
+    local function clearExistsLabel(label)
+        return safeCall(function()
+            label.Text = "__ETERNAL_WAIT__"
+        end)
+    end
+
+    local function waitForExistsCount(
+        label,
+        maximumFrames
+    )
+        local lastRaw = ""
+
+        maximumFrames =
+            math.max(
+                0,
+                tonumber(maximumFrames)
+                or 0
+            )
+
+        for frame = 0, maximumFrames do
+            local answer,
+                raw =
+                readExistsLabel(
+                    label
+                )
+
+            lastRaw = raw
+
+            if answer ~= nil then
+                return answer,
+                    raw
+            end
+
+            if frame < maximumFrames then
+                runService.RenderStepped:Wait()
+            end
+        end
+
+        return nil,
+            lastRaw
+    end
+
+    -- Try hover callbacks attached anywhere around the card without moving the
+    -- user's real cursor. Some Index revisions bind the popup updater to the
+    -- card root, an overlay button, or a child hitbox instead of the ImageLabel.
+    local function relatedSignalHover(
+        imageLabel,
+        brainrotList,
+        existsLabel
+    )
+        if not imageLabel
+            or not imageLabel:IsA("GuiObject") then
+            return nil,
+                "",
+                false
+        end
+
+        local candidates = {}
+        local seen = {}
+
+        local function addCandidate(object)
+            if object
+                and object:IsA("GuiObject")
+                and not seen[object] then
+                seen[object] = true
+                table.insert(
+                    candidates,
+                    object
+                )
+            end
+        end
+
+        -- Exact image first, then every ancestor up to the card/list boundary.
+        addCandidate(imageLabel)
+
+        local cardRoot = imageLabel
+        local current = imageLabel.Parent
+
+        while current
+            and current ~= brainrotList do
+            if current:IsA("GuiObject") then
+                addCandidate(current)
+                cardRoot = current
+            end
+
+            current = current.Parent
+        end
+
+        -- Overlay buttons/hitboxes are commonly siblings or descendants of the
+        -- visible image. Include every GuiObject under the detected card root.
+        if cardRoot
+            and cardRoot ~= imageLabel then
+            for _, descendant in ipairs(
+                cardRoot:GetDescendants()
+            ) do
+                if descendant:IsA("GuiObject") then
+                    addCandidate(descendant)
+                end
+            end
+        end
+
+        for _, candidate in ipairs(
+            candidates
+        ) do
+            forceGuiTreeVisible(
+                candidate,
+                brainrotList
+            )
+
+            local center =
+                candidate.AbsolutePosition
+                + candidate.AbsoluteSize / 2
+
+            local fired = false
+
+            -- Fire MouseEnter and MouseMoved independently because different
+            -- game revisions attach the popup writer to different signals.
+            if fireExistingSignal(
+                candidate.MouseEnter,
+                center.X,
+                center.Y
+            ) then
+                fired = true
+
+                local answer, raw =
+                    waitForExistsCount(
+                        existsLabel,
+                        directRetryFrames
+                    )
+
+                if answer ~= nil then
+                    return answer,
+                        raw,
+                        true
+                end
+            end
+
+            if fireExistingSignal(
+                candidate.MouseMoved,
+                center.X,
+                center.Y
+            ) then
+                fired = true
+
+                local answer, raw =
+                    waitForExistsCount(
+                        existsLabel,
+                        directRetryFrames
+                    )
+
+                if answer ~= nil then
+                    return answer,
+                        raw,
+                        true
+                end
+            end
+
+            -- A callback can also schedule its popup write for the next render
+            -- step. Give only candidates that actually fired one final frame.
+            if fired then
+                local answer, raw =
+                    waitForExistsCount(
+                        existsLabel,
+                        1
+                    )
+
+                if answer ~= nil then
+                    return answer,
+                        raw,
+                        true
+                end
+            end
+        end
+
+        return nil,
+            "",
+            false
+    end
+
+    -- Separate no-mouse fallback: use Roblox GUI selection focus rather than
+    -- pointer hover. Some Index revisions route gamepad/keyboard selection
+    -- through the same card-info updater used by mouse hover.
+    local function selectionFocusCapture(
+        imageLabel,
+        brainrotList,
+        existsLabel
+    )
+        if not imageLabel
+            or not imageLabel:IsA("GuiObject") then
+            return nil,
+                "",
+                false
+        end
+
+        local candidates = {}
+        local seen = {}
+
+        local function addCandidate(object)
+            if object
+                and object:IsA("GuiObject")
+                and not seen[object] then
+                seen[object] = true
+                table.insert(
+                    candidates,
+                    object
+                )
+            end
+        end
+
+        addCandidate(imageLabel)
+
+        local cardRoot = imageLabel
+        local current = imageLabel.Parent
+
+        while current
+            and current ~= brainrotList do
+            if current:IsA("GuiObject") then
+                addCandidate(current)
+                cardRoot = current
+            end
+
+            current = current.Parent
+        end
+
+        if cardRoot then
+            for _, descendant in ipairs(
+                cardRoot:GetDescendants()
+            ) do
+                if descendant:IsA("GuiObject") then
+                    addCandidate(descendant)
+                end
+            end
+        end
+
+        local previousSelected = nil
+
+        safeCall(function()
+            previousSelected =
+                guiService.SelectedObject
+        end)
+
+        for _, candidate in ipairs(
+            candidates
+        ) do
+            forceGuiTreeVisible(
+                candidate,
+                brainrotList
+            )
+
+            safeCall(function()
+                candidate.Selectable = true
+                candidate.Active = true
+            end)
+
+            clearExistsLabel(
+                existsLabel
+            )
+
+            local selected =
+                safeCall(function()
+                    guiService.SelectedObject =
+                        candidate
+                end)
+
+            if selected then
+                -- Setting SelectedObject itself raises SelectionGained in Roblox.
+                -- Give the game's handler a tiny render window to fill the popup.
+                local answer,
+                    raw =
+                    waitForExistsCount(
+                        existsLabel,
+                        2
+                    )
+
+                if answer ~= nil then
+                    safeCall(function()
+                        guiService.SelectedObject =
+                            previousSelected
+                    end)
+
+                    return answer,
+                        raw,
+                        true
+                end
+            end
+        end
+
+        safeCall(function()
+            guiService.SelectedObject =
+                previousSelected
+        end)
+
+        return nil,
+            "",
+            false
+    end
+
+    local function captureExistsFast(
+        imageLabel,
+        brainrotList,
+        savedScrollPositions,
+        popup,
+        existsLabel,
+        directOnly
+    )
+        safeCall(function()
+            popup.Visible = false
+        end)
+
+        clearExistsLabel(
+            existsLabel
+        )
+
+        -- Fast path: connected MouseEnter/MouseMoved callbacks generally set
+        -- the popup text synchronously, so no cursor movement or scrolling is
+        -- needed for the overwhelming majority of cards.
+        local directHovered =
+            directHoverGuiObject(
+                imageLabel
+            )
+
+        if directHovered then
+            local answer,
+                raw =
+                waitForExistsCount(
+                    existsLabel,
+                    directRetryFrames
+                )
+
+            if answer ~= nil then
+                return answer,
+                    raw,
+                    true,
+                    false
+            end
+        end
+
+        -- Second zero-cursor method: find the actual hover owner around the
+        -- card (root/overlay/child hitbox) and invoke its existing callbacks.
+        clearExistsLabel(
+            existsLabel
+        )
+
+        local relatedAnswer,
+            relatedRaw,
+            relatedHovered =
+            relatedSignalHover(
+                imageLabel,
+                brainrotList,
+                existsLabel
+            )
+
+        if relatedAnswer ~= nil then
+            return relatedAnswer,
+                relatedRaw,
+                true,
+                false
+        end
+
+        -- Third method: focus the card through GuiService selection. This does
+        -- not use MouseEnter, MouseMoved, cursor movement, or an input manager.
+        clearExistsLabel(
+            existsLabel
+        )
+
+        local selectedAnswer,
+            selectedRaw,
+            selectedWorked =
+            selectionFocusCapture(
+                imageLabel,
+                brainrotList,
+                existsLabel
+            )
+
+        if selectedAnswer ~= nil then
+            return selectedAnswer,
+                selectedRaw,
+                true,
+                false
+        end
+
+        if directOnly then
+            return nil,
+                "",
+                false,
+                false
+        end
+
+        -- Final no-input fallback: scroll the card into view by changing the
+        -- ScrollingFrame CanvasPosition directly, then invoke its existing GUI
+        -- hover callbacks again. This never moves the user's cursor.
+        safeCall(function()
+            popup.Visible = false
+        end)
+
+        clearExistsLabel(
+            existsLabel
+        )
+
+        local signalHovered =
+            hoverGuiObject(
+                imageLabel,
+                brainrotList,
+                savedScrollPositions
+            )
+
+        if not signalHovered then
+            return nil,
+                "",
+                false,
+                true
+        end
+
+        local answer,
+            raw =
+            waitForExistsCount(
+                existsLabel,
+                signalRetryFrames
+            )
+
+        return answer,
+            raw,
+            true,
+            true
+    end
+
+    local function cacheExistsResult(
+        state,
+        mutationName,
+        itemName,
+        itemKey,
+        answer,
+        raw,
+        hovered
+    )
+        local recordKey =
+            mutationName
+            .. " "
+            .. tostring(itemKey)
+
+        local brainrotCache =
+            state.Brainrots[itemKey]
+
+        if not brainrotCache then
+            brainrotCache = {
+                Name = itemName,
+                Exists = {},
+            }
+
+            state.Brainrots[itemKey] =
+                brainrotCache
+        end
+
+        if answer ~= nil
+            and tostring(answer) ~= "" then
+            if state.values[recordKey] == nil then
+                table.insert(
+                    state.records,
+                    {
+                        mutation = mutationName,
+                        item = tostring(itemName),
+                        key = tostring(itemKey),
+                        answer = answer,
+                        raw = raw,
+                    }
+                )
+
+                state.capturedCounts += 1
+            end
+
+            state.values[recordKey] = answer
+            state.raw[recordKey] = raw
+            state.Mutations[mutationName][itemKey] =
+                answer
+            brainrotCache.Exists[mutationName] =
+                answer
+
+            return true
+        end
+
+        local errorText =
+            hovered
+            and (
+                tostring(raw or "") ~= ""
+                and tostring(raw)
+                or "ERROR"
+            )
+            or "HOVER FAILED"
+
+        state.errors[recordKey] = errorText
+        state.Mutations[mutationName][itemKey] =
+            "ERROR"
+        brainrotCache.Exists[mutationName] =
+            "ERROR"
+
+        return false
+    end
+
+    local function runMutationExistsScan()
+        local state =
+            _G.__ETERNALHUB_MUTATION_EXISTS
+
+        if type(state) ~= "table"
+            or state.generation
+                ~= ETERNALHUB_EXECUTION_GENERATION
+            or state.scanning == true then
+            return
+        end
+
+        local scanStartedClock =
+            os.clock()
+
+        state.scanning = true
+        state.ready = false
+        state.error = nil
+        state.values = {}
+        state.raw = {}
+        state.records = {}
+        state.errors = {}
+        state.Mutations = {}
+        state.Brainrots = {}
+        state.TotalBrainrots = nil
+        state.TotalRaw = nil
+        state.scannedNames = {}
+        state.clickedMutations = 0
+        state.foundImages = 0
+        state.hoverAttempts = 0
+        state.hoveredImages = 0
+        state.capturedCounts = 0
+        state.directCaptures = 0
+        state.physicalFallbacks = 0
+        state.burstMisses = 0
+        state.scanDuration = 0
+        state.EndedOn = nil
+
+        -- Keep the complete two-way cache available to the riddle solver and
+        -- to executor-side inspection without copying anything to clipboard.
+        safeCall(function()
+            local environment =
+                typeof(getgenv) == "function"
+                and getgenv()
+                or _G
+
+            environment.AIRiddlerExistData =
+                state
+        end)
+
+        local indexButton = nil
+        local indexGui = nil
+        local indexPanel = nil
+        local openedSignal = nil
+        local savedScrollPositions = {}
+        local redeemerWasEnabled =
+            EternalHubAutoRedeemer.Enabled
+
+        safeCall(function()
+            -- Keep Eternal's own panel out of the Index while its GUI callbacks
+            -- are being resolved. No cursor or input service is touched.
+            EternalHubAutoRedeemer.Enabled = false
+        end)
+
+        local scanWorked,
+            scanError =
+            safeCall(function()
+                if not game:IsLoaded() then
+                    game.Loaded:Wait()
+                end
+
+                if not isCurrentEternalHubExecution() then
+                    return
+                end
+
+                local playerGui =
+                    LocalPlayer:WaitForChild(
+                        "PlayerGui",
+                        45
+                    )
+
+                local leftCenterGui =
+                    playerGui:WaitForChild(
+                        "LeftCenter",
+                        45
+                    )
+
+                local leftCenter =
+                    leftCenterGui:WaitForChild(
+                        "LeftCenter",
+                        15
+                    )
+
+                local buttons =
+                    leftCenter:WaitForChild(
+                        "Buttons",
+                        15
+                    )
+
+                indexButton =
+                    buttons:WaitForChild(
+                        "Index",
+                        15
+                    )
+
+                indexGui =
+                    playerGui:WaitForChild(
+                        "Index",
+                        45
+                    )
+
+                indexPanel =
+                    indexGui:WaitForChild(
+                        "Index",
+                        15
+                    )
+
+                local wasVisible =
+                    indexIsVisible(
+                        indexGui,
+                        indexPanel
+                    )
+
+                if not wasVisible then
+                    local activated,
+                        signalName =
+                        activateIndexButton(
+                            indexButton
+                        )
+
+                    if not activated then
+                        state.error =
+                            "Index button connections unavailable"
+                        return
+                    end
+
+                    openedSignal = signalName
+
+                    if not waitForIndexVisibility(
+                        indexGui,
+                        indexPanel,
+                        true,
+                        20
+                    ) then
+                        -- Try the other click signal if the first callable
+                        -- connection did not actually make the Index visible.
+                        if openedSignal == "MouseButton1Click"
+                            and fireExistingSignal(
+                                indexButton.Activated
+                            ) then
+
+                            openedSignal = "Activated"
+                        elseif openedSignal == "Activated"
+                            and fireExistingSignal(
+                                indexButton.MouseButton1Click
+                            ) then
+
+                            openedSignal = "MouseButton1Click"
+                        end
+
+                        if not waitForIndexVisibility(
+                            indexGui,
+                            indexPanel,
+                            true
+                        ) then
+                            state.error =
+                                "Index did not open"
+                            return
+                        end
+                    end
+                end
+
+                runService.RenderStepped:Wait()
+                runService.RenderStepped:Wait()
+
+                local main =
+                    indexPanel:WaitForChild(
+                        "Main",
+                        15
+                    )
+
+                local mutationsRoot =
+                    main:WaitForChild(
+                        "Mutations",
+                        15
+                    )
+
+                local header =
+                    main:WaitForChild(
+                        "Header",
+                        15
+                    )
+
+                local totalLabel =
+                    header:WaitForChild(
+                        "Total",
+                        15
+                    )
+
+                local content =
+                    main:WaitForChild(
+                        "Content",
+                        15
+                    )
+
+                local holder =
+                    content:WaitForChild(
+                        "Holder",
+                        15
+                    )
+
+                local brainrotList =
+                    holder:WaitForChild(
+                        "List",
+                        15
+                    )
+
+                local popup =
+                    indexGui:WaitForChild(
+                        "Popup",
+                        15
+                    )
+
+                local infos =
+                    popup:WaitForChild(
+                        "Infos",
+                        15
+                    )
+
+                local existsContainer =
+                    infos:WaitForChild(
+                        "Exists",
+                        15
+                    )
+
+                local existsLabel =
+                    existsContainer:WaitForChild(
+                        "Label",
+                        15
+                    )
+
+                state.TotalBrainrots,
+                    state.TotalRaw =
+                    readTotalLabel(
+                        totalLabel
+                    )
+
+                -- Let lazily-created Index entries populate after opening.
+                for _ = 1, 50 do
+                    if #mutationsRoot:GetChildren() >= 5 then
+                        break
+                    end
+
+                    runService.RenderStepped:Wait()
+                end
+
+                local entries =
+                    getOrderedMutationEntries(
+                        mutationsRoot
+                    )
+
+                local function connectionCount(signal)
+                    if signal == nil
+                        or typeof(getconnections) ~= "function" then
+                        return 0
+                    end
+
+                    local ok, connections =
+                        safeCall(function()
+                            return getconnections(signal)
+                        end)
+
+                    if ok
+                        and type(connections) == "table" then
+                        return #connections
+                    end
+
+                    return 0
+                end
+
+                local function findRealHoverTargets(
+                    imageLabel,
+                    brainrotList
+                )
+                    local targets = {}
+                    local seen = {}
+
+                    local function add(object, score)
+                        if not object
+                            or not object:IsA("GuiObject")
+                            or seen[object] then
+                            return
+                        end
+
+                        local enterCount =
+                            connectionCount(
+                                object.MouseEnter
+                            )
+
+                        local moveCount =
+                            connectionCount(
+                                object.MouseMoved
+                            )
+
+                        if enterCount <= 0
+                            and moveCount <= 0 then
+                            return
+                        end
+
+                        seen[object] = true
+
+                        table.insert(
+                            targets,
+                            {
+                                Object = object,
+                                Score =
+                                    score
+                                    + enterCount * 20
+                                    + moveCount * 10
+                                    + (
+                                        object:IsA("GuiButton")
+                                        and 100
+                                        or 0
+                                    )
+                                    + (
+                                        object.Active
+                                        and 5
+                                        or 0
+                                    ),
+                            }
+                        )
+                    end
+
+                    -- Exact image first in case this revision does bind to it.
+                    add(
+                        imageLabel,
+                        500
+                    )
+
+                    -- Descendants often contain the transparent ImageButton/TextButton
+                    -- that actually owns the card's hover listener.
+                    for _, descendant in ipairs(
+                        imageLabel:GetDescendants()
+                    ) do
+                        if descendant:IsA("GuiObject") then
+                            add(
+                                descendant,
+                                450
+                            )
+                        end
+                    end
+
+                    -- Walk up through the card container. Many Index revisions put
+                    -- the listener on Template/Card/Holder rather than the image.
+                    local current =
+                        imageLabel.Parent
+
+                    local depth = 0
+
+                    while current
+                        and current ~= brainrotList
+                        and depth < 8 do
+
+                        if current:IsA("GuiObject") then
+                            add(
+                                current,
+                                400 - depth * 10
+                            )
+
+                            -- Also inspect siblings/overlays inside each nearby card
+                            -- container, but keep the search local to avoid unrelated
+                            -- Index controls.
+                            for _, sibling in ipairs(
+                                current:GetChildren()
+                            ) do
+                                if sibling:IsA("GuiObject") then
+                                    add(
+                                        sibling,
+                                        350 - depth * 10
+                                    )
+
+                                    for _, child in ipairs(
+                                        sibling:GetChildren()
+                                    ) do
+                                        if child:IsA("GuiObject") then
+                                            add(
+                                                child,
+                                                300 - depth * 10
+                                            )
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        current =
+                            current.Parent
+
+                        depth += 1
+                    end
+
+                    table.sort(
+                        targets,
+                        function(a, b)
+                            return a.Score
+                                > b.Score
+                        end
+                    )
+
+                    return targets
+                end
+
+                -- Heavy executor-only fallback cache. Built lazily only after the
+                -- normal no-input GUI methods miss, so successful cards stay fast.
+                local popupClosureCache = nil
+
+                local function collectPopupClosures()
+                    if popupClosureCache ~= nil then
+                        return popupClosureCache
+                    end
+
+                    popupClosureCache = {}
+
+                    if typeof(getgc) ~= "function" then
+                        return popupClosureCache
+                    end
+
+                    local seen = {}
+
+                    local function addFunction(fn, score)
+                        if typeof(fn) ~= "function"
+                            or seen[fn] then
+                            return
+                        end
+
+                        seen[fn] = true
+
+                        table.insert(
+                            popupClosureCache,
+                            {
+                                Function = fn,
+                                Score = score or 0,
+                            }
+                        )
+                    end
+
+                    local ok,
+                        objects =
+                        safeCall(function()
+                            return getgc(true)
+                        end)
+
+                    if not ok
+                        or type(objects) ~= "table" then
+                        return popupClosureCache
+                    end
+
+                    local getConstants =
+                        (
+                            debug
+                            and debug.getconstants
+                        )
+                        or getconstants
+
+                    local getUps =
+                        (
+                            debug
+                            and debug.getupvalues
+                        )
+                        or getupvalues
+
+                    for _, object in ipairs(objects) do
+                        if typeof(object) == "function" then
+                            local score = 0
+
+                            if typeof(getConstants) == "function" then
+                                local cOk,
+                                    constants =
+                                    safeCall(function()
+                                        return getConstants(
+                                            object
+                                        )
+                                    end)
+
+                                if cOk
+                                    and type(constants) == "table" then
+
+                                    for _, constant in pairs(constants) do
+                                        if type(constant) == "string" then
+                                            local s =
+                                                string.lower(
+                                                    constant
+                                                )
+
+                                            if string.find(s, "exists", 1, true) then
+                                                score += 100
+                                            end
+
+                                            if string.find(s, "popup", 1, true) then
+                                                score += 70
+                                            end
+
+                                            if string.find(s, "infos", 1, true)
+                                                or string.find(s, "info", 1, true) then
+                                                score += 35
+                                            end
+
+                                            if string.find(s, "index", 1, true) then
+                                                score += 25
+                                            end
+
+                                            if string.find(s, "hover", 1, true)
+                                                or string.find(s, "mouseenter", 1, true) then
+                                                score += 20
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+
+                            if score > 0
+                                and typeof(getUps) == "function" then
+
+                                local uOk,
+                                    upvalues =
+                                    safeCall(function()
+                                        return getUps(
+                                            object
+                                        )
+                                    end)
+
+                                if uOk
+                                    and type(upvalues) == "table" then
+
+                                    for _, value in pairs(upvalues) do
+                                        if typeof(value) == "Instance" then
+                                            local n =
+                                                string.lower(
+                                                    value.Name
+                                                )
+
+                                            if n == "exists" then
+                                                score += 120
+                                            elseif n == "popup" then
+                                                score += 80
+                                            elseif n == "infos" then
+                                                score += 40
+                                            elseif n == "index" then
+                                                score += 30
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+
+                            -- Keep only plausible Index/popup functions.
+                            if score >= 50 then
+                                addFunction(
+                                    object,
+                                    score
+                                )
+                            end
+
+                        elseif type(object) == "table" then
+                            -- Controller-style tables often expose named popup methods.
+                            local names = {
+                                "Hover",
+                                "OnHover",
+                                "ShowHover",
+                                "ShowInfo",
+                                "ShowInfos",
+                                "ShowPopup",
+                                "UpdateInfo",
+                                "UpdateInfos",
+                                "UpdatePopup",
+                                "SetInfo",
+                                "SetInfos",
+                                "SetPopup",
+                                "DisplayInfo",
+                                "DisplayPopup",
+                                "RefreshInfo",
+                                "RefreshPopup",
+                                "OpenInfo",
+                                "OpenPopup",
+                            }
+
+                            for _, key in ipairs(names) do
+                                local fn =
+                                    rawget(
+                                        object,
+                                        key
+                                    )
+
+                                if typeof(fn) == "function" then
+                                    addFunction(
+                                        fn,
+                                        60
+                                    )
+                                end
+                            end
+                        end
+                    end
+
+                    table.sort(
+                        popupClosureCache,
+                        function(a, b)
+                            return a.Score > b.Score
+                        end
+                    )
+
+                    -- Hard cap keeps the last-resort sweep bounded.
+                    while #popupClosureCache > 120 do
+                        table.remove(
+                            popupClosureCache
+                        )
+                    end
+
+                    return popupClosureCache
+                end
+
+                local function invokePopupClosure(
+                    fn,
+                    object,
+                    imageLabel,
+                    itemName
+                )
+                    if typeof(fn) ~= "function" then
+                        return false
+                    end
+
+                    local x =
+                        object.AbsolutePosition.X
+                        + object.AbsoluteSize.X / 2
+
+                    local y =
+                        object.AbsolutePosition.Y
+                        + object.AbsoluteSize.Y / 2
+
+                    local argSets = {
+                        {},
+                        {object},
+                        {imageLabel},
+                        {itemName},
+                        {object, itemName},
+                        {imageLabel, itemName},
+                        {object, x, y},
+                        {imageLabel, x, y},
+                        {object, imageLabel},
+                        {object, imageLabel, itemName},
+                    }
+
+                    for _, args in ipairs(argSets) do
+                        if safeCall(function()
+                            fn(
+                                table.unpack(
+                                    args
+                                )
+                            )
+                        end) then
+                            return true
+                        end
+                    end
+
+                    return false
+                end
+
+                local function exhaustiveNoInputFallback(
+                    imageLabel,
+                    brainrotList,
+                    existsLabel,
+                    itemName
+                )
+                    local objects = {}
+                    local seen = {}
+
+                    local function add(object)
+                        if object
+                            and object:IsA("GuiObject")
+                            and not seen[object] then
+
+                            seen[object] = true
+                            objects[#objects + 1] =
+                                object
+                        end
+                    end
+
+                    add(imageLabel)
+
+                    for _, descendant in ipairs(
+                        imageLabel:GetDescendants()
+                    ) do
+                        add(descendant)
+                    end
+
+                    local current = imageLabel.Parent
+                    local depth = 0
+
+                    while current
+                        and current ~= brainrotList
+                        and depth < 10 do
+
+                        add(current)
+
+                        for _, child in ipairs(
+                            current:GetDescendants()
+                        ) do
+                            if child:IsA("GuiObject") then
+                                add(child)
+                            end
+                        end
+
+                        current = current.Parent
+                        depth += 1
+                    end
+
+                    local function readNow()
+                        return readExistsLabel(
+                            existsLabel
+                        )
+                    end
+
+                    local signalNames = {
+                        "MouseEnter",
+                        "MouseMoved",
+                        "SelectionGained",
+                        "InputBegan",
+                        "InputChanged",
+                        "InputEnded",
+                    }
+
+                    -- Sweep every practical event connection we can obtain from each
+                    -- local card object. No synthetic InputObject is created.
+                    for _, object in ipairs(objects) do
+                        local x =
+                            object.AbsolutePosition.X
+                            + object.AbsoluteSize.X / 2
+
+                        local y =
+                            object.AbsolutePosition.Y
+                            + object.AbsoluteSize.Y / 2
+
+                        for _, signalName in ipairs(signalNames) do
+                            local signal = nil
+
+                            safeCall(function()
+                                signal =
+                                    object[signalName]
+                            end)
+
+                            if signal ~= nil
+                                and typeof(getconnections) == "function" then
+
+                                local ok,
+                                    connections =
+                                    safeCall(function()
+                                        return getconnections(
+                                            signal
+                                        )
+                                    end)
+
+                                if ok
+                                    and type(connections) == "table" then
+
+                                    for _, connection in ipairs(connections) do
+                                        local fn =
+                                            connection.Function
+
+                                        if typeof(fn) == "function" then
+                                            local variants = {
+                                                {},
+                                                {object},
+                                                {x, y},
+                                                {object, x, y},
+                                                {nil},
+                                                {nil, false},
+                                                {nil, false, nil},
+                                            }
+
+                                            for _, args in ipairs(variants) do
+                                                safeCall(function()
+                                                    fn(
+                                                        table.unpack(
+                                                            args
+                                                        )
+                                                    )
+                                                end)
+
+                                                local answer,
+                                                    raw =
+                                                    readNow()
+
+                                                if answer ~= nil then
+                                                    return answer,
+                                                        raw,
+                                                        true
+                                                end
+                                            end
+                                        end
+
+                                        if typeof(connection.Fire) == "function" then
+                                            safeCall(function()
+                                                connection:Fire()
+                                            end)
+
+                                            local answer,
+                                                raw =
+                                                readNow()
+
+                                            if answer ~= nil then
+                                                return answer,
+                                                    raw,
+                                                    true
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        -- Property/listener based UI revisions.
+                        local properties = {
+                            "Visible",
+                            "Active",
+                            "Selectable",
+                            "AbsolutePosition",
+                            "AbsoluteSize",
+                            "ZIndex",
+                        }
+
+                        if typeof(getconnections) == "function" then
+                            for _, property in ipairs(properties) do
+                                local signal = nil
+
+                                safeCall(function()
+                                    signal =
+                                        object:GetPropertyChangedSignal(
+                                            property
+                                        )
+                                end)
+
+                                if signal then
+                                    local ok,
+                                        connections =
+                                        safeCall(function()
+                                            return getconnections(
+                                                signal
+                                            )
+                                        end)
+
+                                    if ok
+                                        and type(connections) == "table" then
+
+                                        for _, connection in ipairs(connections) do
+                                            local fn =
+                                                connection.Function
+
+                                            if typeof(fn) == "function" then
+                                                safeCall(fn)
+
+                                                local answer,
+                                                    raw =
+                                                    readNow()
+
+                                                if answer ~= nil then
+                                                    return answer,
+                                                        raw,
+                                                        true
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    -- Final method: targeted global closure/controller candidates that
+                    -- look related to Index/Popup/Exists. This is deliberately last.
+                    local closures =
+                        collectPopupClosures()
+
+                    for _, entry in ipairs(closures) do
+                        local fn =
+                            entry.Function
+
+                        for _, object in ipairs(objects) do
+                            invokePopupClosure(
+                                fn,
+                                object,
+                                imageLabel,
+                                itemName
+                            )
+
+                            local answer,
+                                raw =
+                                readNow()
+
+                            if answer ~= nil then
+                                return answer,
+                                    raw,
+                                    true
+                            end
+                        end
+                    end
+
+                    return nil,
+                        "",
+                        false
+                end
+
+                local function fireImageLabelConnections(
+                    imageLabel,
+                    brainrotList,
+                    existsLabel
+                )
+                    local objects = {}
+                    local seen = {}
+
+                    local function add(object)
+                        if object
+                            and object:IsA("GuiObject")
+                            and not seen[object] then
+
+                            seen[object] = true
+                            objects[#objects + 1] =
+                                object
+                        end
+                    end
+
+                    -- Exact ImageLabel.
+                    add(imageLabel)
+
+                    -- Everything inside the visual.
+                    for _, descendant in ipairs(
+                        imageLabel:GetDescendants()
+                    ) do
+                        add(descendant)
+                    end
+
+                    -- Card containers, overlays, siblings and their direct children.
+                    local current =
+                        imageLabel.Parent
+
+                    local depth = 0
+
+                    while current
+                        and current ~= brainrotList
+                        and depth < 8 do
+
+                        add(current)
+
+                        for _, child in ipairs(
+                            current:GetChildren()
+                        ) do
+                            add(child)
+
+                            for _, grandchild in ipairs(
+                                child:GetChildren()
+                            ) do
+                                add(grandchild)
+                            end
+                        end
+
+                        current =
+                            current.Parent
+
+                        depth += 1
+                    end
+
+                    local firedAny = false
+
+                    local function check()
+                        local answer,
+                            raw =
+                            readExistsLabel(
+                                existsLabel
+                            )
+
+                        if answer ~= nil then
+                            return answer,
+                                raw
+                        end
+
+                        return nil,
+                            ""
+                    end
+
+                    local function invokeFunctionVariants(
+                        fn,
+                        object,
+                        x,
+                        y
+                    )
+                        if typeof(fn) ~= "function" then
+                            return nil,
+                                ""
+                        end
+
+                        -- Executors/game revisions do not always expose the same
+                        -- callback wrapper signature. Try the common forms with
+                        -- no yield between invocation and Exists.Label read.
+                        local variants = {
+                            {x, y},
+                            {},
+                            {object},
+                            {object, x, y},
+                        }
+
+                        for _, args in ipairs(
+                            variants
+                        ) do
+                            if safeCall(function()
+                                fn(
+                                    table.unpack(
+                                        args
+                                    )
+                                )
+                            end) then
+                                firedAny = true
+                            end
+
+                            local answer,
+                                raw =
+                                check()
+
+                            if answer ~= nil then
+                                return answer,
+                                    raw
+                            end
+                        end
+
+                        return nil,
+                            ""
+                    end
+
+                    local function invokeConnectionVariants(
+                        connection,
+                        object,
+                        x,
+                        y
+                    )
+                        if not connection then
+                            return nil,
+                                ""
+                        end
+
+                        local fn =
+                            connection.Function
+
+                        if typeof(fn) == "function" then
+                            local answer,
+                                raw =
+                                invokeFunctionVariants(
+                                    fn,
+                                    object,
+                                    x,
+                                    y
+                                )
+
+                            if answer ~= nil then
+                                return answer,
+                                    raw
+                            end
+
+                            -- Last-resort callback introspection. Hover connections
+                            -- sometimes wrap the actual popup writer in an upvalue.
+                            -- Only inspect functions/tables captured by THIS card's
+                            -- own GUI connection, never a global getgc sweep.
+                            local getUps =
+                                (
+                                    debug
+                                    and debug.getupvalues
+                                )
+                                or getupvalues
+
+                            if typeof(getUps) == "function" then
+                                local ok,
+                                    upvalues =
+                                    safeCall(function()
+                                        return getUps(
+                                            fn
+                                        )
+                                    end)
+
+                                if ok
+                                    and type(upvalues) == "table" then
+
+                                    for _, value in pairs(
+                                        upvalues
+                                    ) do
+                                        if typeof(value) == "function" then
+                                            answer,
+                                                raw =
+                                                invokeFunctionVariants(
+                                                    value,
+                                                    object,
+                                                    x,
+                                                    y
+                                                )
+
+                                            if answer ~= nil then
+                                                return answer,
+                                                    raw
+                                            end
+
+                                        elseif type(value) == "table" then
+                                            -- Common controller/table callback names.
+                                            local names = {
+                                                "Hover",
+                                                "OnHover",
+                                                "MouseEnter",
+                                                "Show",
+                                                "ShowInfo",
+                                                "ShowPopup",
+                                                "Open",
+                                                "Update",
+                                                "UpdateInfo",
+                                                "SetInfo",
+                                                "Display",
+                                                "Refresh",
+                                            }
+
+                                            for _, key in ipairs(
+                                                names
+                                            ) do
+                                                local nested =
+                                                    rawget(
+                                                        value,
+                                                        key
+                                                    )
+
+                                                if typeof(nested) == "function" then
+                                                    answer,
+                                                        raw =
+                                                        invokeFunctionVariants(
+                                                            nested,
+                                                            object,
+                                                            x,
+                                                            y
+                                                        )
+
+                                                    if answer ~= nil then
+                                                        return answer,
+                                                            raw
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        -- Some executors expose connection:Fire even when Function
+                        -- is hidden or wrapped.
+                        if typeof(connection.Fire) == "function" then
+                            local variants = {
+                                {x, y},
+                                {},
+                                {object},
+                                {object, x, y},
+                            }
+
+                            for _, args in ipairs(
+                                variants
+                            ) do
+                                if safeCall(function()
+                                    connection:Fire(
+                                        table.unpack(
+                                            args
+                                        )
+                                    )
+                                end) then
+                                    firedAny = true
+                                end
+
+                                local answer,
+                                    raw =
+                                    check()
+
+                                if answer ~= nil then
+                                    return answer,
+                                        raw
+                                end
+                            end
+                        end
+
+                        return nil,
+                            ""
+                    end
+
+                    local function sweepSignal(
+                        signal,
+                        object,
+                        x,
+                        y
+                    )
+                        if signal == nil then
+                            return nil,
+                                ""
+                        end
+
+                        -- Method 1/2: getconnections -> Function / connection:Fire.
+                        if typeof(getconnections) == "function" then
+                            local ok,
+                                connections =
+                                safeCall(function()
+                                    return getconnections(
+                                        signal
+                                    )
+                                end)
+
+                            if ok
+                                and type(connections) == "table" then
+
+                                for _, connection in ipairs(
+                                    connections
+                                ) do
+                                    local answer,
+                                        raw =
+                                        invokeConnectionVariants(
+                                            connection,
+                                            object,
+                                            x,
+                                            y
+                                        )
+
+                                    if answer ~= nil then
+                                        return answer,
+                                            raw
+                                    end
+                                end
+                            end
+                        end
+
+                        -- Method 3: firesignal itself, with signature variants.
+                        if typeof(firesignal) == "function" then
+                            local variants = {
+                                {x, y},
+                                {},
+                                {object},
+                                {object, x, y},
+                            }
+
+                            for _, args in ipairs(
+                                variants
+                            ) do
+                                if safeCall(function()
+                                    firesignal(
+                                        signal,
+                                        table.unpack(
+                                            args
+                                        )
+                                    )
+                                end) then
+                                    firedAny = true
+                                end
+
+                                local answer,
+                                    raw =
+                                    check()
+
+                                if answer ~= nil then
+                                    return answer,
+                                        raw
+                                end
+                            end
+                        end
+
+                        return nil,
+                            ""
+                    end
+
+                    -- Fast zero-yield sweep across every local candidate.
+                    for _, object in ipairs(objects) do
+                        if object.Parent then
+                            safeCall(function()
+                                object.Visible = true
+                                object.Active = true
+                            end)
+
+                            local x =
+                                object.AbsolutePosition.X
+                                + object.AbsoluteSize.X / 2
+
+                            local y =
+                                object.AbsolutePosition.Y
+                                + object.AbsoluteSize.Y / 2
+
+                            -- Hover-like signals only; avoid button activation/click
+                            -- callbacks because those can perform unrelated actions.
+                            local signals = {
+                                object.MouseEnter,
+                                object.MouseMoved,
+                                object.SelectionGained,
+                            }
+
+                            for _, signal in ipairs(
+                                signals
+                            ) do
+                                local answer,
+                                    raw =
+                                    sweepSignal(
+                                        signal,
+                                        object,
+                                        x,
+                                        y
+                                    )
+
+                                if answer ~= nil then
+                                    return answer,
+                                        raw,
+                                        true
+                                end
+                            end
+                        end
+                    end
+
+                    -- Method 4: real Roblox GUI selection state, still no input
+                    -- manager. This is intentionally after the zero-yield methods
+                    -- because it may require a render step in some revisions.
+                    for _, object in ipairs(objects) do
+                        if object.Parent then
+                            local oldSelectable =
+                                object.Selectable
+
+                            safeCall(function()
+                                object.Selectable = true
+                                object.Active = true
+                            end)
+
+                            local oldSelected = nil
+
+                            safeCall(function()
+                                oldSelected =
+                                    guiService.SelectedObject
+
+                                guiService.SelectedObject =
+                                    object
+                            end)
+
+                            local answer,
+                                raw =
+                                check()
+
+                            if answer ~= nil then
+                                safeCall(function()
+                                    guiService.SelectedObject =
+                                        oldSelected
+
+                                    object.Selectable =
+                                        oldSelectable
+                                end)
+
+                                return answer,
+                                    raw,
+                                    true
+                            end
+
+                            -- Also directly fire SelectionGained after selection,
+                            -- for clients where setting SelectedObject does not route
+                            -- through the same callback.
+                            answer,
+                                raw =
+                                sweepSignal(
+                                    object.SelectionGained,
+                                    object,
+                                    0,
+                                    0
+                                )
+
+                            safeCall(function()
+                                guiService.SelectedObject =
+                                    oldSelected
+
+                                object.Selectable =
+                                    oldSelectable
+                            end)
+
+                            if answer ~= nil then
+                                return answer,
+                                    raw,
+                                    true
+                            end
+                        end
+                    end
+
+                    return nil,
+                        "",
+                        firedAny
+                end
+
+                -- ULTRA-FAST STACKED CALLBACK BURST:
+                -- This does NOT use VirtualInputManager or physical mouse movement.
+                -- Fast callback paths run first; GuiService selection is only a miss fallback.
+                -- For each mutation we:
+                --   1) snapshot every real card once,
+                --   2) temporarily stack all card hit targets at one GUI point,
+                --   3) invoke each card's already-connected hover callback directly,
+                --   4) read Exists.Label immediately before the next callback can
+                --      overwrite it.
+                -- There is no per-card task.wait(). The only render wait is the
+                -- mutation rebuild + one stack-application frame.
+                for _, entry in ipairs(entries) do
+                    if not isCurrentEternalHubExecution() then
+                        break
+                    end
+
+                    local mutationName = tostring(entry.Name)
+                    table.insert(state.scannedNames, mutationName)
+                    state.Mutations[mutationName] = {}
+
+                    if clickMutationEntry(entry) then
+                        state.clickedMutations += 1
+
+                        -- One frame for the mutation grid to rebuild.
+                        runService.RenderStepped:Wait()
+
+                        local descendants = brainrotList:GetDescendants()
+                        local resultImages = table.create(#descendants)
+
+                        for _, descendant in ipairs(descendants) do
+                            if descendant:IsA("ImageLabel")
+                                and descendant.Parent then
+
+                                local current = descendant
+                                local insideTemplate = false
+
+                                while current
+                                    and current ~= brainrotList do
+
+                                    if string.lower(current.Name) == "template" then
+                                        insideTemplate = true
+                                        break
+                                    end
+
+                                    current = current.Parent
+                                end
+
+                                if not insideTemplate then
+                                    resultImages[#resultImages + 1] = descendant
+                                end
+                            end
+                        end
+
+                        -- table.create(size) reserves capacity but also creates nil
+                        -- slots, so compact the array before iterating.
+                        local compactImages = {}
+                        for _, imageLabel in pairs(resultImages) do
+                            if imageLabel then
+                                compactImages[#compactImages + 1] = imageLabel
+                            end
+                        end
+                        resultImages = compactImages
+
+                        state.foundImages += #resultImages
+
+                        local names = table.create(#resultImages)
+                        local stacked = table.create(#resultImages)
+                        local sharedAbsolute = nil
+
+                        -- Resolve names and stack every visual BEFORE firing anything.
+                        for imageIndex, imageLabel in ipairs(resultImages) do
+                            names[imageIndex] =
+                                inferResultItemName(
+                                    imageLabel,
+                                    brainrotList,
+                                    imageIndex
+                                )
+
+                            if imageLabel
+                                and imageLabel.Parent then
+
+                                if not sharedAbsolute then
+                                    sharedAbsolute =
+                                        imageLabel.AbsolutePosition
+                                end
+
+                                stacked[imageIndex] = {
+                                    Image = imageLabel,
+                                    Position = imageLabel.Position,
+                                    AnchorPoint = imageLabel.AnchorPoint,
+                                    ZIndex = imageLabel.ZIndex,
+                                    Active = imageLabel.Active,
+                                    Visible = imageLabel.Visible,
+                                }
+
+                                local parent =
+                                    imageLabel.Parent
+
+                                local parentAbsolute =
+                                    parent:IsA("GuiObject")
+                                    and parent.AbsolutePosition
+                                    or Vector2.zero
+
+                                safeCall(function()
+                                    imageLabel.Visible = true
+                                    imageLabel.Active = true
+                                    imageLabel.AnchorPoint =
+                                        Vector2.new(0, 0)
+
+                                    imageLabel.Position =
+                                        UDim2.fromOffset(
+                                            sharedAbsolute.X
+                                                - parentAbsolute.X,
+                                            sharedAbsolute.Y
+                                                - parentAbsolute.Y
+                                        )
+
+                                    imageLabel.ZIndex =
+                                        20000 + imageIndex
+                                end)
+                            end
+                        end
+
+                        -- Roblox only needs to resolve the temporary stack once.
+                        if sharedAbsolute
+                            and #resultImages > 0 then
+                            runService.RenderStepped:Wait()
+                        end
+
+                        local duplicateNames = {}
+                        local sharedX = sharedAbsolute and sharedAbsolute.X or 0
+                        local sharedY = sharedAbsolute and sharedAbsolute.Y or 0
+
+                        safeCall(function()
+                            popup.Visible = false
+                        end)
+
+                        -- ZERO-YIELD BURST. Calling connection.Function directly is
+                        -- faster than firesignal when the executor exposes it.
+                        local function burstSignal(signal, x, y)
+                            if signal == nil then
+                                return false
+                            end
+
+                            local fired = false
+
+                            if typeof(getconnections) == "function" then
+                                local ok, connections =
+                                    safeCall(function()
+                                        return getconnections(signal)
+                                    end)
+
+                                if ok
+                                    and type(connections) == "table" then
+
+                                    for _, connection in ipairs(connections) do
+                                        local fn = connection.Function
+
+                                        if typeof(fn) == "function" then
+                                            if safeCall(function()
+                                                fn(x, y)
+                                            end) then
+                                                fired = true
+                                            end
+                                        elseif typeof(connection.Fire) == "function" then
+                                            if safeCall(function()
+                                                connection:Fire(x, y)
+                                            end) then
+                                                fired = true
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+
+                            if not fired
+                                and typeof(firesignal) == "function" then
+
+                                if safeCall(function()
+                                    firesignal(
+                                        signal,
+                                        x,
+                                        y
+                                    )
+                                end) then
+                                    fired = true
+                                end
+                            end
+
+                            return fired
+                        end
+
+                        for imageIndex, imageLabel in ipairs(resultImages) do
+                            if not isCurrentEternalHubExecution() then
+                                break
+                            end
+
+                            local itemName =
+                                names[imageIndex]
+                                or ("Unknown " .. tostring(imageIndex))
+
+                            duplicateNames[itemName] =
+                                (duplicateNames[itemName] or 0) + 1
+
+                            local itemKey = itemName
+
+                            if duplicateNames[itemName] > 1 then
+                                itemKey =
+                                    itemName
+                                    .. " #"
+                                    .. tostring(
+                                        duplicateNames[itemName]
+                                    )
+                            end
+
+                            state.hoverAttempts += 1
+
+                            clearExistsLabel(
+                                existsLabel
+                            )
+
+                            -- Every card ImageLabel gets the dedicated
+                            -- getconnections path before the generic resolver.
+                            local imageLabelAnswer,
+                                imageLabelRaw,
+                                imageLabelTriggered =
+                                fireImageLabelConnections(
+                                    imageLabel,
+                                    brainrotList,
+                                    existsLabel
+                                )
+
+                            local imageCenterX =
+                                sharedX
+                                + (
+                                    imageLabel.AbsoluteSize.X
+                                    / 2
+                                )
+
+                            local imageCenterY =
+                                sharedY
+                                + (
+                                    imageLabel.AbsoluteSize.Y
+                                    / 2
+                                )
+
+                            local triggered =
+                                imageLabelTriggered
+
+                            local answer =
+                                imageLabelAnswer
+
+                            local raw =
+                                imageLabelRaw
+
+                            -- Do not assume the ImageLabel owns hover. Resolve every
+                            -- local object that actually has connected MouseEnter /
+                            -- MouseMoved callbacks and try them in priority order.
+                            local hoverTargets = {}
+
+                            if answer == nil then
+                                hoverTargets =
+                                    findRealHoverTargets(
+                                        imageLabel,
+                                        brainrotList
+                                    )
+                            end
+
+                            for _, targetInfo in ipairs(
+                                hoverTargets
+                            ) do
+                                local target =
+                                    targetInfo.Object
+
+                                if target
+                                    and target.Parent then
+
+                                    local tx =
+                                        target.AbsolutePosition.X
+                                        + target.AbsoluteSize.X / 2
+
+                                    local ty =
+                                        target.AbsolutePosition.Y
+                                        + target.AbsoluteSize.Y / 2
+
+                                    local targetTriggered =
+                                        burstSignal(
+                                            target.MouseEnter,
+                                            tx,
+                                            ty
+                                        )
+
+                                    if burstSignal(
+                                        target.MouseMoved,
+                                        tx,
+                                        ty
+                                    ) then
+                                        targetTriggered = true
+                                    end
+
+                                    triggered =
+                                        triggered
+                                        or targetTriggered
+
+                                    -- Read synchronously after EACH real connected
+                                    -- target so another callback cannot overwrite it.
+                                    answer,
+                                        raw =
+                                        readExistsLabel(
+                                            existsLabel
+                                        )
+
+                                    if answer ~= nil then
+                                        break
+                                    end
+                                end
+                            end
+
+                            -- If every normal/fast no-input method missed, use
+                            -- the exhaustive signal/property/getgc closure fallback.
+                            if answer == nil then
+                                clearExistsLabel(
+                                    existsLabel
+                                )
+
+                                local exhaustiveAnswer,
+                                    exhaustiveRaw,
+                                    exhaustiveTriggered =
+                                    exhaustiveNoInputFallback(
+                                        imageLabel,
+                                        brainrotList,
+                                        existsLabel,
+                                        itemName
+                                    )
+
+                                if exhaustiveAnswer ~= nil then
+                                    answer =
+                                        exhaustiveAnswer
+
+                                    raw =
+                                        exhaustiveRaw
+                                end
+
+                                triggered =
+                                    triggered
+                                    or exhaustiveTriggered
+                            end
+
+                            if answer ~= nil then
+                                state.hoveredImages += 1
+                                state.directCaptures += 1
+                            else
+                                state.burstMisses += 1
+                            end
+
+                            cacheExistsResult(
+                                state,
+                                mutationName,
+                                itemName,
+                                itemKey,
+                                answer,
+                                raw or "",
+                                triggered
+                            )
+                        end
+
+                        -- Restore every temporarily stacked ImageLabel in one pass.
+                        for _, visual in ipairs(stacked) do
+                            if visual
+                                and visual.Image
+                                and visual.Image.Parent then
+
+                                safeCall(function()
+                                    visual.Image.Position =
+                                        visual.Position
+
+                                    visual.Image.AnchorPoint =
+                                        visual.AnchorPoint
+
+                                    visual.Image.ZIndex =
+                                        visual.ZIndex
+
+                                    visual.Image.Active =
+                                        visual.Active
+
+                                    visual.Image.Visible =
+                                        visual.Visible
+                                end)
+                            end
+                        end
+
+                        descendants = nil
+                        resultImages = nil
+                        names = nil
+                        stacked = nil
+                    end
+                end
+
+                -- Finish on the unmutated category exactly like the standalone
+                -- scanner. Current clients may call it Normal or Default.
+                for _, entry in ipairs(entries) do
+                    local compactMutation =
+                        compactIndexName(
+                            entry.Name
+                        )
+
+                    if compactMutation == "normal"
+                        or compactMutation == "default" then
+                        if clickMutationEntry(entry) then
+                            state.EndedOn =
+                                tostring(entry.Name)
+                        end
+
+                        break
+                    end
+                end
+
+                safeCall(function()
+                    popup.Visible = false
+                    existsLabel.Text = ""
+                end)
+            end)
+
+        for scrollingFrame, canvasPosition in pairs(
+            savedScrollPositions
+        ) do
+            if scrollingFrame.Parent then
+                safeCall(function()
+                    scrollingFrame.CanvasPosition =
+                        canvasPosition
+                end)
+            end
+        end
+
+        -- Leave the Index open on Normal/Default so the final selected state
+        -- is visible and no second toggle can accidentally reopen/close it.
+        state.IndexLeftOpen =
+            indexGui ~= nil
+            and indexPanel ~= nil
+            and indexIsVisible(
+                indexGui,
+                indexPanel
+            )
+
+        safeCall(function()
+            EternalHubAutoRedeemer.Enabled =
+                redeemerWasEnabled
+        end)
+
+        if not isCurrentEternalHubExecution() then
+            return
+        end
+
+        if not scanWorked
+            and not state.error then
+            state.error =
+                tostring(
+                    scanError
+                    or "Index scan failed"
+                )
+        end
+
+        state.scanning = false
+        state.ready =
+            next(state.values) ~= nil
+        state.scannedAt = os.time()
+        state.scanDuration =
+            math.max(
+                0,
+                os.clock()
+                    - scanStartedClock
+            )
+
+        if not state.ready
+            and not state.error then
+            if state.clickedMutations == 0 then
+                state.error =
+                    "No mutation Buttons were clicked"
+            elseif state.foundImages == 0 then
+                state.error =
+                    "No item ImageLabels were found"
+            elseif state.hoveredImages == 0 then
+                state.error =
+                    "No item ImageLabels could be hovered"
+            else
+                state.error =
+                    "Exists.Label never returned a numeric count"
+            end
+        end
+
+        if state.ready then
+            logHistory(
+                "Exists scan captured "
+                    .. tostring(state.capturedCounts)
+                    .. " counts in "
+                    .. string.format(
+                        "%.2f",
+                        state.scanDuration
+                    )
+                    .. "s ("
+                    .. tostring(state.directCaptures)
+                    .. " burst, "
+                    .. tostring(state.physicalFallbacks)
+                    .. " fallback)",
+                "code"
+            )
+        else
+            logHistory(
+                "Exists scan: "
+                    .. tostring(
+                        state.error
+                        or "failed"
+                    ),
+                "code"
+            )
+        end
+    end
+
+    _G.EternalRedeemerMutationExists = function(
+        mutationName,
+        itemName
+    )
+        local state =
+            _G.__ETERNALHUB_MUTATION_EXISTS
+
+        if type(state) ~= "table"
+            or type(state.records) ~= "table" then
+            return nil
+        end
+
+        local wantedMutation =
+            compactIndexName(
+                mutationName
+            )
+
+        local wantedItem =
+            compactIndexName(
+                itemName
+            )
+
+        local mutationResults = {}
+
+        for _, record in ipairs(
+            state.records
+        ) do
+            local recordMutation =
+                compactIndexName(
+                    record.mutation
+                )
+
+            local mutationMatches =
+                recordMutation == wantedMutation
+                or (
+                    wantedMutation == "normal"
+                    and recordMutation == "default"
+                )
+                or (
+                    wantedMutation == "default"
+                    and recordMutation == "normal"
+                )
+
+            if mutationMatches then
+
+                if wantedItem ~= ""
+                    and compactIndexName(
+                        record.item
+                    ) == wantedItem then
+                    return record.answer
+                end
+
+                mutationResults[
+                    tostring(record.item)
+                ] = record.answer
+            end
+        end
+
+        if wantedItem == ""
+            and next(mutationResults) ~= nil then
+            return mutationResults
+        end
+
+        return nil
+    end
+
+    _G.EternalRedeemerMutationExistsStatus = function()
+        return _G.__ETERNALHUB_MUTATION_EXISTS
+    end
+_G.EternalRedeemerExistCache = function()
+        local state =
+            _G.__ETERNALHUB_MUTATION_EXISTS
+
+        if type(state) ~= "table" then
+            return nil
+        end
+
+        return {
+            TotalBrainrots = state.TotalBrainrots,
+            Mutations = state.Mutations,
+            Brainrots = state.Brainrots,
+            Errors = state.errors,
+            Ready = state.ready,
+            Scanning = state.scanning,
+            DirectCaptures = state.directCaptures,
+            PhysicalFallbacks = state.physicalFallbacks,
+            BurstMisses = state.burstMisses,
+            ScanDuration = state.scanDuration,
+        }
+    end
+
+    _G.EternalRedeemerRefreshMutationExists = function()
+        task.spawn(
+            runMutationExistsScan
+        )
+    end
+
+    runMutationExistsScan()
+end)
+
+--========================================================
+-- OPTIONAL WEBSOCKET DASHBOARD BRIDGE
+--
+-- Publishes scanner status and chunked count snapshots to the companion
+-- Eternal Exist Count browser extension. The bridge is isolated in its own
+-- task/function so its locals do not add pressure to the scanner's Luau
+-- register pool. It supports common executor WebSocket API spellings.
+--========================================================
+task.spawn(function()
+    local environment =
+        (typeof(getgenv) == "function" and getgenv())
+        or _G
+
+    if environment.EternalExistWebSocketEnabled == false then
+        return
+    end
+
+    local httpService = game:GetService("HttpService")
+    local websocketURL = tostring(
+        environment.EternalExistWebSocketURL
+        or "wss://sab-info-book.xyzcheatz.workers.dev/ws"
+    )
+    local room = tostring(
+        environment.EternalExistWebSocketRoom
+        or "eternal"
+    )
+    local token = tostring(
+        environment.EternalExistWebSocketToken
+        or "change-me"
+    )
+    local generation = ETERNALHUB_EXECUTION_GENERATION
+    local socket = nil
+    local running = true
+    local reconnectRequested = false
+    local lastStateSignature = ""
+    local lastSendAt = 0
+    local reconnectAttempts = 0
+    local bridgeStatus = {
+        connected = false,
+        url = websocketURL,
+        room = room,
+        lastError = nil,
+        lastSentAt = nil,
+        reconnectAttempts = 0,
+    }
+
+    _G.__ETERNAL_EXIST_WEBSOCKET = bridgeStatus
+
+    local function encode(value)
+        local ok, result = pcall(function()
+            return httpService:JSONEncode(value)
+        end)
+
+        if ok then
+            return result
+        end
+
+        bridgeStatus.lastError = tostring(result)
+        return nil
+    end
+
+    local function send(payload)
+        if not socket or not bridgeStatus.connected then
+            return false
+        end
+
+        payload.room = room
+        payload.token = token
+        payload.source = "eternal-exist-lua"
+        payload.protocol = 1
+
+        local body = encode(payload)
+
+        if not body then
+            return false
+        end
+
+        local ok, err = pcall(function()
+            if typeof(socket.Send) == "function" then
+                socket:Send(body)
+            elseif typeof(socket.send) == "function" then
+                socket:send(body)
+            else
+                error("WebSocket object has no Send method")
+            end
+        end)
+
+        if not ok then
+            bridgeStatus.connected = false
+            bridgeStatus.lastError = tostring(err)
+            return false
+        end
+
+        bridgeStatus.lastSentAt = os.time()
+        return true
+    end
+
+    local function publicStatus(state)
+        state = type(state) == "table" and state or {}
+
+        return {
+            ready = state.ready == true,
+            scanning = state.scanning == true,
+            mutationCount = type(state.Mutations) == "table"
+                and #state.Mutations
+                or 0,
+            brainrotCount = type(state.Brainrots) == "table"
+                and #state.Brainrots
+                or 0,
+            capturedCounts = tonumber(state.capturedCounts) or 0,
+            clickedMutations = tonumber(state.clickedMutations) or 0,
+            foundImages = tonumber(state.foundImages) or 0,
+            burstMisses = tonumber(state.burstMisses) or 0,
+            scanDuration = tonumber(state.scanDuration) or 0,
+            scannedAt = state.scannedAt,
+            error = state.error,
+            placeId = game.PlaceId,
+            jobId = game.JobId,
+            player = LocalPlayer and LocalPlayer.Name or nil,
+        }
+    end
+
+    local snapshotBusy = false
+    local function sendSnapshotBody()
+        local state = _G.__ETERNALHUB_MUTATION_EXISTS
+
+        if type(state) ~= "table" then
+            send({
+                type = "status",
+                data = publicStatus(nil),
+            })
+            return
+        end
+
+        send({
+            type = "snapshot_start",
+            data = publicStatus(state),
+            recordCount = type(state.records) == "table"
+                and #state.records
+                or 0,
+        })
+
+        local records = type(state.records) == "table"
+            and state.records
+            or {}
+        local chunkSize = 50
+        local chunkIndex = 0
+
+        for first = 1, #records, chunkSize do
+            chunkIndex += 1
+            local chunk = {}
+
+            for index = first, math.min(first + chunkSize - 1, #records) do
+                local record = records[index]
+
+                chunk[#chunk + 1] = {
+                    mutation = record.mutation,
+                    item = record.item,
+                    answer = record.answer,
+                    raw = record.raw,
+                    triggered = record.triggered == true,
+                }
+            end
+
+            send({
+                type = "snapshot_chunk",
+                chunkIndex = chunkIndex,
+                records = chunk,
+            })
+
+            task.wait()
+        end
+
+        send({
+            type = "snapshot_end",
+            data = publicStatus(state),
+            chunks = chunkIndex,
+        })
+    end
+
+    local function sendSnapshot()
+        if snapshotBusy then return end
+        snapshotBusy = true
+        local ok, err = pcall(sendSnapshotBody)
+        snapshotBusy = false
+        if not ok then bridgeStatus.lastError = tostring(err) end
+    end
+
+    local function handleMessage(rawMessage)
+        local ok, message = pcall(function()
+            return httpService:JSONDecode(tostring(rawMessage))
+        end)
+
+        if not ok or type(message) ~= "table" then
+            return
+        end
+
+        if message.room and tostring(message.room) ~= room then
+            return
+        end
+
+        if message.type == "refresh" then
+            if typeof(_G.EternalRedeemerRefreshMutationExists) == "function" then
+                _G.EternalRedeemerRefreshMutationExists()
+                send({ type = "refresh_ack" })
+            end
+        elseif message.type == "get_snapshot" then
+            task.spawn(sendSnapshot)
+        elseif message.type == "ping" then
+            send({
+                type = "pong",
+                sentAt = message.sentAt,
+            })
+        end
+    end
+
+    local function bindSignal(signal, callback)
+        if signal and typeof(signal.Connect) == "function" then
+            signal:Connect(callback)
+            return true
+        end
+
+        return false
+    end
+
+    local function connectSocket()
+        local connector = nil
+
+        if type(WebSocket) == "table"
+            and typeof(WebSocket.connect) == "function" then
+            connector = WebSocket.connect
+        elseif type(websocket) == "table"
+            and typeof(websocket.connect) == "function" then
+            connector = websocket.connect
+        elseif type(syn) == "table"
+            and type(syn.websocket) == "table"
+            and typeof(syn.websocket.connect) == "function" then
+            connector = syn.websocket.connect
+        end
+
+        if not connector then
+            return nil, "Executor does not expose a WebSocket.connect API"
+        end
+
+        local ok, result = pcall(connector, websocketURL)
+
+        if not ok then
+            return nil, tostring(result)
+        end
+
+        return result, nil
+    end
+
+    _G.EternalExistWebSocketStatus = function()
+        return bridgeStatus
+    end
+
+    _G.EternalExistWebSocketReconnect = function()
+        reconnectRequested = true
+    end
+
+    while running
+        and _G.__ETERNAL_EXIST_SCAN_GENERATION == generation do
+        reconnectRequested = false
+        bridgeStatus.connected = false
+
+        local newSocket, connectionError = connectSocket()
+
+        if newSocket then
+            socket = newSocket
+            bridgeStatus.connected = true
+            bridgeStatus.lastError = nil
+            reconnectAttempts = 0
+            bridgeStatus.reconnectAttempts = 0
+
+            local closed = false
+            local messageSignal = socket.OnMessage or socket.Message
+            local closeSignal = socket.OnClose
+
+            bindSignal(messageSignal, handleMessage)
+            bindSignal(closeSignal, function()
+                closed = true
+                bridgeStatus.connected = false
+            end)
+
+            send({
+                type = "hello",
+                role = "producer",
+                client = "Eternal Auto Exist Count",
+                generation = generation,
+            })
+            task.spawn(sendSnapshot)
+
+            while not closed
+                and not reconnectRequested
+                and bridgeStatus.connected
+                and _G.__ETERNAL_EXIST_SCAN_GENERATION == generation do
+                local state = _G.__ETERNALHUB_MUTATION_EXISTS or {}
+                local signature = table.concat({
+                    tostring(state.scanning),
+                    tostring(state.ready),
+                    tostring(state.clickedMutations),
+                    tostring(state.capturedCounts),
+                    tostring(state.error),
+                }, ":")
+
+                if signature ~= lastStateSignature
+                    or os.clock() - lastSendAt >= 5 then
+                    lastStateSignature = signature
+                    lastSendAt = os.clock()
+                    send({
+                        type = "status",
+                        data = publicStatus(state),
+                    })
+                end
+
+                if state.ready == true
+                    and state.scannedAt
+                    and state.scannedAt ~= bridgeStatus.lastSnapshotAt then
+                    bridgeStatus.lastSnapshotAt = state.scannedAt
+                    task.spawn(sendSnapshot)
+                end
+
+                task.wait(0.4)
+            end
+
+            pcall(function()
+                if typeof(socket.Close) == "function" then
+                    socket:Close()
+                elseif typeof(socket.close) == "function" then
+                    socket:close()
+                end
+            end)
+        else
+            bridgeStatus.lastError = connectionError
+        end
+
+        socket = nil
+        bridgeStatus.connected = false
+        reconnectAttempts += 1
+        bridgeStatus.reconnectAttempts = reconnectAttempts
+
+        if _G.__ETERNAL_EXIST_SCAN_GENERATION ~= generation then
+            running = false
+            break
+        end
+
+        task.wait(math.min(2 + reconnectAttempts, 10))
+    end
+end)

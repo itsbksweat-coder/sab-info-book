@@ -1,3 +1,11 @@
 name = "sab-info-book"
-main = "worker-v17.js"
+main = "worker-v18.js"
 compatibility_date = "2026-09-01"
+
+[[durable_objects.bindings]]
+name = "EXIST_RELAY"
+class_name = "ExistRelay"
+
+[[migrations]]
+tag = "exist-relay-v1"
+new_sqlite_classes = ["ExistRelay"]
