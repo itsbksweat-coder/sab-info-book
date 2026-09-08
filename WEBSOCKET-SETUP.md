@@ -1,5 +1,11 @@
 # Exist count WebSocket relay
 
+## Automatic Info Book updates
+
+After an authenticated completed scan is saved, the next request to `/` includes a LIVE INDEX EXIST COUNTS section. `/exist/counts` provides the same facts as JSON for wiki clients. No GitHub commit or redeploy is required for each scan. Existing already-open pages or clients with their own caches must fetch again to see new data.
+
+These public read routes publish only Brainrot names, mutations, counts and the server save timestamp. Player/server identifiers and raw scanner text remain excluded. Missing counts stay unknown; zero stays zero. The existing `.txt` scanner needs no additional changes for this integration. Worker deployment and the matching ETERNAL_TOKEN configuration are still required.
+
 Wrangler now loads worker-v18.js. All existing Info Book URLs delegate to v17 unchanged.
 
 Deploy using your existing Cloudflare Workers Builds connection (build: none; deploy: npx wrangler deploy), or run `npx wrangler deploy` from an authenticated checkout. The SQLite Durable Object migration is included.
