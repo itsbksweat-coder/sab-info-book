@@ -3,10 +3,24 @@ import infoBook from './worker-v17.js';
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname === '/exist/health') return Response.json({version:19, websocket:'/ws', counts:'/exist/counts', infoBookIntegration:true, configured:!!env.ETERNAL_TOKEN});
+    if (url.pathname === '/exist/health') return Response.json({version:20, websocket:'/ws', counts:'/exist/counts', sharedAnswers:'/ai/shared', infoBookIntegration:true, sharedAiAnswers:true, configured:!!env.ETERNAL_TOKEN});
     if (url.pathname === '/exist/counts') {
       if (!env.EXIST_RELAY) return Response.json({error:'Exist storage unavailable'}, {status:503});
       return env.EXIST_RELAY.get(env.EXIST_RELAY.idFromName('eternal')).fetch(new Request('https://internal/counts'));
+    }
+    if (url.pathname === '/ai/shared') {
+      if (!env.EXIST_RELAY) return Response.json({error:'Shared answer storage unavailable'}, {status:503});
+      if (!['GET','POST'].includes(request.method)) return Response.json({error:'Method not allowed'}, {status:405});
+      const headers = new Headers(request.headers);
+      headers.set('x-eternal-client-ip', request.headers.get('CF-Connecting-IP') || '');
+      const body = request.method === 'POST' ? await request.text() : undefined;
+      return env.EXIST_RELAY.get(env.EXIST_RELAY.idFromName('eternal')).fetch(
+        new Request('https://internal/ai/shared' + url.search, {
+          method: request.method,
+          headers,
+          body
+        })
+      );
     }
     if (url.pathname === '/') {
       const response = await infoBook.fetch(request, env, ctx);
@@ -45,6 +59,28 @@ export function formatExistCounts(snapshot) {
 }
 
 const safeName = value => typeof value === 'string' ? value.replace(/[\r\n\t]/g,' ').slice(0,200) : '';
+
+const normalizeSharedQuestion = value => String(value || '')
+  .toLowerCase()
+  .replace(/<[^>]*>/g, ' ')
+  .replace(/[’']/g, '')
+  .replace(/&/g, ' and ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0,240);
+
+const safeSharedAnswer = value => {
+  const answer = String(value || '').replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+  return answer && answer.length <= 120 ? answer : '';
+};
+
+async function sharedClientFingerprint(value) {
+  const input = new TextEncoder().encode(String(value || 'unknown'));
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
+  return [...digest.slice(0, 12)].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
 const safeCount = value => {
   if (typeof value === 'string' && /^\d[\d,]*$/.test(value.trim())) value=Number(value.replaceAll(',',''));
   return Number.isSafeInteger(value) && value>=0 ? value : null;
@@ -53,7 +89,13 @@ const safeCount = value => {
 export class ExistRelay {
   constructor(ctx, env) { this.ctx=ctx; this.env=env; this.pending=new Map(); this.queue=Promise.resolve(); }
   async fetch(request) {
-    if (new URL(request.url).pathname === '/counts') {
+    const internalUrl = new URL(request.url);
+
+    if (internalUrl.pathname === '/ai/shared') {
+      return this.handleSharedAnswer(request, internalUrl);
+    }
+
+    if (internalUrl.pathname === '/counts') {
       const result = this.queue.then(()=>this.publicSnapshot());
       this.queue = result.then(()=>{},()=>{});
       return Response.json(await result,{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});
@@ -64,6 +106,118 @@ export class ExistRelay {
     pair[1].serializeAttachment({authenticated:false});
     return new Response(null,{status:101,webSocket:pair[0]});
   }
+  async handleSharedAnswer(request, url) {
+    let payload = null;
+    if (request.method === 'POST') {
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({error:'Invalid JSON'}, {status:400});
+      }
+    }
+
+    const question = normalizeSharedQuestion(
+      request.method === 'GET'
+        ? url.searchParams.get('q')
+        : payload?.question
+    );
+
+    if (question.length < 3) {
+      return Response.json({hit:false,error:'Invalid question'}, {status:400});
+    }
+
+    const storageKey = 'ai:' + question;
+
+    if (request.method === 'GET') {
+      const record = await this.ctx.storage.get(storageKey);
+      const answer = safeSharedAnswer(record?.approved);
+      return Response.json({
+        hit: !!answer,
+        answer: answer || null,
+        votes: Number(record?.approvedVotes || 0),
+        updatedAt: record?.updatedAt || null
+      }, {headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});
+    }
+
+    const answer = safeSharedAnswer(payload?.answer);
+    if (!answer) {
+      return Response.json({error:'Invalid answer'}, {status:400});
+    }
+
+    const fingerprint = await sharedClientFingerprint(
+      request.headers.get('x-eternal-client-ip') || ''
+    );
+
+    const result = await this.ctx.storage.transaction(async tx => {
+      const record = await tx.get(storageKey) || {
+        question,
+        candidates: {},
+        approved: null,
+        approvedVotes: 0,
+        updatedAt: null
+      };
+
+      const candidates =
+        record.candidates && typeof record.candidates === 'object'
+          ? record.candidates
+          : {};
+
+      const candidate = candidates[answer] || {count:0, clients:[]};
+      const clients = Array.isArray(candidate.clients)
+        ? candidate.clients.filter(v => typeof v === 'string').slice(-24)
+        : [];
+
+      if (!clients.includes(fingerprint)) {
+        clients.push(fingerprint);
+        candidate.count = Math.min(9999, Number(candidate.count || 0) + 1);
+      }
+
+      candidate.clients = clients;
+      candidates[answer] = candidate;
+
+      const ranked = Object.entries(candidates)
+        .map(([value, info]) => ({
+          answer: safeSharedAnswer(value),
+          count: Number(info?.count || 0)
+        }))
+        .filter(row => row.answer)
+        .sort((a,b) => b.count - a.count || a.answer.localeCompare(b.answer));
+
+      const top = ranked[0] || null;
+      const second = ranked[1] || null;
+
+      // Publish only after two distinct clients agree. A conflicting answer
+      // cannot replace the published answer unless it actually overtakes it.
+      if (top && top.count >= 2 && (!second || top.count > second.count)) {
+        record.approved = top.answer;
+        record.approvedVotes = top.count;
+      }
+
+      // Keep only the strongest few candidates to bound storage.
+      const keep = new Set(ranked.slice(0,6).map(row => row.answer));
+      for (const key of Object.keys(candidates)) {
+        if (!keep.has(key)) delete candidates[key];
+      }
+
+      record.candidates = candidates;
+      record.updatedAt = new Date().toISOString();
+      await tx.put(storageKey, record);
+
+      return {
+        accepted: true,
+        hit: !!safeSharedAnswer(record.approved),
+        answer: safeSharedAnswer(record.approved) || null,
+        votes: Number(record.approvedVotes || 0),
+        candidateVotes: Number(candidate.count || 0),
+        updatedAt: record.updatedAt
+      };
+    });
+
+    return Response.json(result, {
+      headers:{'cache-control':'no-store','access-control-allow-origin':'*'}
+    });
+  }
+
   async publicSnapshot() {
     return this.ctx.storage.transaction(async tx=>{
       const meta=await tx.get('latest');
