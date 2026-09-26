@@ -44,9 +44,29 @@ export default {
       try { body = await request.json(); }
       catch { return json({ok:false,error:"Invalid JSON"}, 400); }
 
-      const question = String(body?.question ?? body?.q ?? "").trim();
-      if (!question) return json({ok:false,error:"Missing question"}, 400);
-      if (question.length > 2000) return json({ok:false,error:"Question too long"}, 413);
+      const originalQuestion = String(body?.question ?? body?.q ?? "").trim();
+      if (!originalQuestion) return json({ok:false,error:"Missing question"}, 400);
+      if (originalQuestion.length > 2000) return json({ok:false,error:"Question too long"}, 413);
+
+      // Preserve a trailing literal number as part of the final concatenated answer.
+      // Examples:
+      // "the color of sand, 67" -> solve "the color of sand", then append "67"
+      // "favorite color 123" -> solve "favorite color", then append "123"
+      // Bare numeric questions such as "67" still return "67" directly.
+      let question = originalQuestion;
+      let literalNumberSuffix = "";
+
+      const suffixMatch = originalQuestion.match(
+        /^(.*?)(?:\s*[,;|+]\s*|\s+)(-?\d+(?:\.\d+)?%?)\s*$/
+      );
+
+      if (suffixMatch && suffixMatch[1]?.trim()) {
+        question = suffixMatch[1].trim().replace(/[\s,;|+]+$/g, "");
+        literalNumberSuffix = suffixMatch[2];
+      }
+
+      const withLiteralNumber = value =>
+        String(value ?? "") + literalNumberSuffix;
 
       // Fast deterministic answers for literal/common multipart pieces.
       // This prevents simple fragments (especially numbers) from being sent to Gemini.
@@ -91,12 +111,12 @@ export default {
 
       // Bare numeric clue fragments such as "67" are already the answer.
       if (/^\d+$/.test(directKey)) {
-        return json({ok:true,answer:directKey});
+        return json({ok:true,answer:withLiteralNumber(directKey)});
       }
 
       const directAnswer = directAnswers.get(directKey);
       if (directAnswer) {
-        return json({ok:true,answer:directAnswer});
+        return json({ok:true,answer:withLiteralNumber(directAnswer)});
       }
 
       // Also support fully-combined simple multipart questions directly on the proxy.
@@ -131,7 +151,7 @@ export default {
         }
 
         if (allDirect) {
-          return json({ok:true,answer:solved.join("")});
+          return json({ok:true,answer:withLiteralNumber(solved.join(""))});
         }
       }
 
@@ -143,7 +163,7 @@ export default {
           );
           if (shared.ok) {
             const hit = await shared.json();
-            if (hit?.hit && hit?.answer) return json({ok:true,answer:String(hit.answer)});
+            if (hit?.hit && hit?.answer) return json({ok:true,answer:withLiteralNumber(hit.answer)});
           }
         } catch {}
       }
@@ -252,7 +272,7 @@ export default {
           })());
         }
 
-        return json({ok:true,answer});
+        return json({ok:true,answer:withLiteralNumber(answer)});
       }
 
       // No AI key configured: expose the constructed prompt only when explicitly
