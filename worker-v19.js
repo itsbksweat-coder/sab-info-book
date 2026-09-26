@@ -75,24 +75,82 @@ export default {
       // GEMINI_API_KEY is a Worker secret and is never returned to the client.
       if (env.GEMINI_API_KEY) {
         const model = env.GEMINI_MODEL || "gemini-3.5-flash-lite";
-        let upstream;
-        try {
-          upstream = await fetch(
-            "https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent?key=" + encodeURIComponent(env.GEMINI_API_KEY),
-            {
-              method:"POST",
-              headers:{"content-type":"application/json"},
-              body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+        const endpoint =
+          "https://generativelanguage.googleapis.com/v1beta/models/" +
+          encodeURIComponent(model) +
+          ":generateContent?key=" +
+          encodeURIComponent(env.GEMINI_API_KEY);
+
+        const body = JSON.stringify({
+          contents: [{parts: [{text: prompt}]}]
+        });
+
+        let upstream = null;
+        let lastStatus = 0;
+        let lastError = "";
+
+        // Multipart riddles can send several requests back-to-back.
+        // Retry transient Gemini/Google failures so one temporary 5xx/429
+        // does not make the whole riddle fail on a later part.
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          try {
+            upstream = await fetch(endpoint, {
+              method: "POST",
+              headers: {"content-type": "application/json"},
+              body
+            });
+
+            lastStatus = upstream.status;
+
+            if (upstream.ok) break;
+
+            lastError = (await upstream.text()).slice(0, 1200);
+            console.error(
+              "Gemini upstream error",
+              JSON.stringify({attempt, status:lastStatus, body:lastError})
+            );
+
+            const transient =
+              lastStatus === 408 ||
+              lastStatus === 409 ||
+              lastStatus === 429 ||
+              lastStatus >= 500;
+
+            if (!transient || attempt === 4) {
+              upstream = null;
+              break;
             }
-          );
-        } catch {
-          return json({ok:false,error:"AI request failed"}, 502);
+          } catch (err) {
+            lastError = String(err?.message || err || "fetch failed").slice(0, 1200);
+            console.error(
+              "Gemini fetch exception",
+              JSON.stringify({attempt, error:lastError})
+            );
+            upstream = null;
+            if (attempt === 4) break;
+          }
+
+          // Small exponential backoff: 250ms, 500ms, 1000ms.
+          await new Promise(resolve => setTimeout(resolve, 250 * (2 ** (attempt - 1))));
         }
 
-        if (!upstream.ok) return json({ok:false,error:"AI request failed"}, 502);
+        if (!upstream || !upstream.ok) {
+          return json({
+            ok:false,
+            error:"AI temporarily unavailable",
+            upstreamStatus:lastStatus || null
+          }, 502);
+        }
+
         const data = await upstream.json();
-        const answer = String(data?.candidates?.[0]?.content?.parts?.map(p=>p?.text||"").join("") || "").trim();
-        if (!answer) return json({ok:false,error:"Empty AI answer"}, 502);
+        const answer = String(
+          data?.candidates?.[0]?.content?.parts?.map(p => p?.text || "").join("") || ""
+        ).trim();
+
+        if (!answer) {
+          console.error("Gemini returned an empty answer", JSON.stringify({status:upstream.status}));
+          return json({ok:false,error:"Empty AI answer"}, 502);
+        }
 
         // Feed the answer into the existing shared-answer cache when available.
         if (env.EXIST_RELAY) {
