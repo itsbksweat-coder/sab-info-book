@@ -1,5 +1,5 @@
 name = "sab-info-book"
-main = "worker-v18.js"
+main = "worker-v19.js"
 compatibility_date = "2026-09-01"
 
 [[durable_objects.bindings]]
