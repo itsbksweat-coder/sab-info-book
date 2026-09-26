@@ -1,4 +1,5 @@
 import baseWorker from "./worker-v18.js";
+export { ExistRelay } from "./worker-v18.js";
 
 const STORED_AI_PROMPT = `You are the SAB riddle/info solver.
 Use the complete Info Book returned by this site as authoritative context.
