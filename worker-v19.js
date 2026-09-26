@@ -21,7 +21,7 @@ export default {
 
     // POST-only client endpoint. The prompt stays on the Worker instead of
     // being supplied by every client request.
-    if (url.pathname === "/" && request.method === "GET") return json({ok:false,error:"POST only"}, 405);\n\n    if (url.pathname === "/ask") {
+    if (url.pathname === "/" && request.method === "GET") return json({ok:false,error:"POST only"}, 405);\n\n    if (url.pathname === "/ask") {\n      const clientToken = request.headers.get("x-riddler-token") || "";\n      if (!env.RIDDLER_CLIENT_TOKEN || clientToken !== env.RIDDLER_CLIENT_TOKEN) return json({ok:false,error:"Unauthorized"}, 401);
       if (request.method === "OPTIONS") return new Response(null, {status:204, headers:{
         "access-control-allow-origin":"*",
         "access-control-allow-headers":"content-type",
