@@ -74,7 +74,7 @@ export default {
       // If an AI provider is configured, send the server-built prompt there.
       // GEMINI_API_KEY is a Worker secret and is never returned to the client.
       if (env.GEMINI_API_KEY) {
-        const model = env.GEMINI_MODEL || "gemini-2.5-flash";
+        const model = env.GEMINI_MODEL || "gemini-3.5-flash-lite";
         let upstream;
         try {
           upstream = await fetch(
