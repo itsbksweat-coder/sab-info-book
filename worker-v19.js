@@ -21,7 +21,17 @@ export default {
 
     // POST-only client endpoint. The prompt stays on the Worker instead of
     // being supplied by every client request.
-    if (url.pathname === "/" && request.method === "GET") return json({ok:false,error:"POST only"}, 405);\n\n    // The public root is also the POST API endpoint. The stored prompt and Info Book are never returned.\n    if (url.pathname === "/" && request.method === "POST") {\n      url.pathname = "/ask";\n      request = new Request(url.toString(), request);\n    }\n\n    if (url.pathname === "/ask") {\n      const clientToken = request.headers.get("x-riddler-token") || "";\n      if (!env.RIDDLER_CLIENT_TOKEN || clientToken !== env.RIDDLER_CLIENT_TOKEN) return json({ok:false,error:"Unauthorized"}, 401);
+    if (url.pathname === "/" && request.method === "GET") return json({ok:false,error:"POST only"}, 405);
+
+    // The public root is also the POST API endpoint. The stored prompt and Info Book are never returned.
+    if (url.pathname === "/" && request.method === "POST") {
+      url.pathname = "/ask";
+      request = new Request(url.toString(), request);
+    }
+
+    if (url.pathname === "/ask") {
+      const clientToken = request.headers.get("x-riddler-token") || "";
+      if (!env.RIDDLER_CLIENT_TOKEN || clientToken !== env.RIDDLER_CLIENT_TOKEN) return json({ok:false,error:"Unauthorized"}, 401);
       if (request.method === "OPTIONS") return new Response(null, {status:204, headers:{
         "access-control-allow-origin":"*",
         "access-control-allow-headers":"content-type",
