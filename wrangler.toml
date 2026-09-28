@@ -1,5 +1,5 @@
 name = "sab-info-book"
-main = "worker-v22.js"
+main = "worker-v23.js"
 compatibility_date = "2026-09-01"
 
 [[durable_objects.bindings]]
