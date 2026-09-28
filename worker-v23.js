@@ -1,0 +1,661 @@
+import baseWorker from "./worker-v18.js";
+export { ExistRelay } from "./worker-v18.js";
+
+const WORKER_CACHE_VERSION = "v23";
+
+const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
+
+PRIMARY GOAL
+Return the exact answer fragment the game expects. Do not chat. Do not explain reasoning.
+
+SOURCE PRIORITY
+1. Rules and hardcoded facts in this prompt.
+2. The supplied SAB Info Book.
+3. Obvious real-world/common-knowledge facts only when the clue is not SAB-specific.
+Never invent an SAB-specific fact that is not supported by these sources.
+
+INTERPRETATION
+- Treat spelling, capitalization, punctuation, apostrophes, minor grammar mistakes, singular/plural forms, aliases, abbreviations, and partial canonical names flexibly.
+- In Sammy/Eternal riddles, "my", "me", "I", "his", and "Sammy" refer to Sammy when context makes that clear.
+- Prefer canonical Brainrot, mutation, rarity, trait, update, event, machine, and item names from the Info Book.
+- A standalone number is literal. Never turn a bare number into a riddle. Preserve its digits exactly.
+- If asked for a name, return the name only. If asked for a count/number, return the number only. If asked for a mutation, return the mutation only.
+- "best", "highest", "most", "strongest" means the highest applicable numeric value unless the Info Book explicitly defines otherwise.
+- "worst", "lowest", "least", "weakest", "rarest" means the lowest applicable numeric value/count unless wording or the Info Book says otherwise.
+- For exist counts, use live/current count data when supplied and never fabricate a missing count.
+
+OUTPUT CONTRACT
+- Output ONLY the requested answer value or fragment.
+- No explanations, markdown, labels, quotes, prefixes, suffixes, or commentary.
+- Never write "Answer:", "Code:", "The answer is", or similar text.
+- Use the exact delimiter requested by an outer multipart instruction.
+- Do not add a delimiter to a single-part answer.
+
+MULTIPART / CODE RIDDLES
+- Solve each clue independently in the original order.
+- Do not let one clue alter another clue's meaning.
+- Bare numeric pieces remain unchanged.
+- When the pieces form a code, concatenate final fragments in clue order with no spaces or punctuation unless the caller explicitly asks for a delimiter.
+- Example: "favorite color, my cat, 67" => bluenova67
+- Example: "the color of grass, the color of tree bark, the color of sand, 67" => greenbrownyellow67
+- If the outer instruction requires ||| between fragments, return the independent fragments with exactly ||| instead of concatenating them.
+
+WORD-ORDER RULES
+- "spell X backwards" or a single answer "backwards" means reverse characters.
+- "backwards order" or "reverse the order" for a list means reverse list elements, not letters inside the elements.
+
+UPDATE / EVENT RULES
+- When asked which update/event/theme something released in, return the update/event/theme NAME if the question asks for the name.
+- Return an Update number only when the question explicitly asks for the number.
+- Pot Pumpkin release theme/name => Halloween.
+
+SAMMY / ETERNAL HARD FACTS
+- Name: Sammy
+- Favorite Brainrot: Meowl
+- Least Favorite Brainrot: Raccooni Jandelini
+- Favorite color: Blue
+- Favorite Travis Scott album: Astro World
+- Birth month: February
+- Age: 24
+- Weight: 250
+- Place after Admin Abuse: Gym
+- Cat name: Nova
+- Favorite mutation: Galaxy
+- Anti-cheat developer name: Adam
+
+COMMON OBJECT COLORS
+- grass/leaves/tree/frog => green
+- sky/ocean/sea/water => blue
+- sun/banana/lemon/cheese/sand => yellow
+- snow/cloud/milk/paper => white
+- blood/fire/tomato/strawberry/apple/rose => red
+- night/coal => black
+- orange/carrot/pumpkin => orange
+- chocolate/dirt/mud/wood/tree bark => brown
+- pig/flamingo => pink
+- grape/lavender => purple
+
+MUTATION MULTIPLIERS
+- Bloodrot 2x
+- Candy 4x
+- Lava 6x
+- Galaxy 7x
+- Yin Yang 7.5x
+- Radioactive 8.5x
+- Cursed 9x
+- Rainbow 10x
+- Divine 10x
+- Cyber 11x
+- Phantom 12x
+- Crystal 13x
+
+RANKED 1/1 RULE
+For "best/highest 1/1 mutation", compare only that Brainrot's tracked 1/1 mutations and return the highest multiplier mutation. For "worst/lowest", return the lowest multiplier mutation. Return only the mutation name.
+
+DATE RULES
+A CURRENT DATE CONTEXT is supplied by the Worker. Use it for "today", "current date", "date/day of the month", current month/year, and weekday-relative questions. For date/day of the month, return only the numeric day.
+
+FINAL CHECK
+Before answering: use the Info Book instead of guessing SAB facts; preserve literal numbers; preserve multipart order; return only the exact requested value.`;
+
+const json = (data, status=200) => Response.json(data, {
+  status,
+  headers: {
+    "cache-control": "no-store",
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "content-type,x-riddler-token",
+    "access-control-allow-methods": "POST,OPTIONS"
+  }
+});
+
+const normalizeDirect = value => String(value || "")
+  .toLowerCase()
+  .replace(/<[^>]*>/g, " ")
+  .replace(/[’']/g, "'")
+  .replace(/[^a-z0-9']+/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const directAnswers = new Map([
+  ["the color of grass","green"],
+  ["the color of the grass","green"],
+  ["what color is grass","green"],
+  ["what colour is grass","green"],
+  ["grass color","green"],
+  ["grass colour","green"],
+
+  ["the color of tree bark","brown"],
+  ["the color of the tree bark","brown"],
+  ["the colour of tree bark","brown"],
+  ["the colour of the tree bark","brown"],
+  ["what color is tree bark","brown"],
+  ["what colour is tree bark","brown"],
+  ["tree bark color","brown"],
+  ["tree bark colour","brown"],
+  ["bark color","brown"],
+  ["bark colour","brown"],
+
+  ["the color of sand","yellow"],
+  ["the color of the sand","yellow"],
+  ["the colour of sand","yellow"],
+  ["the colour of the sand","yellow"],
+  ["what color is sand","yellow"],
+  ["what colour is sand","yellow"],
+  ["sand color","yellow"],
+  ["sand colour","yellow"]
+]);
+
+const NUMBER_ONLY = /^-?\d+(?:\.\d+)?%?$/;
+
+function centralDateParts() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  }).formatToParts(new Date());
+
+  const out = {};
+  for (const part of parts) {
+    if (part.type !== "literal") out[part.type] = part.value;
+  }
+  return out;
+}
+
+function currentPromptContext() {
+  const p = centralDateParts();
+  return [
+    "CURRENT DATE CONTEXT (America/Chicago):",
+    "weekday=" + (p.weekday || ""),
+    "month=" + (p.month || ""),
+    "day=" + (p.day || ""),
+    "year=" + (p.year || "")
+  ].join("\n");
+}
+
+function directDateAnswer(question) {
+  const q = normalizeDirect(question);
+  const p = centralDateParts();
+
+  const asksDay =
+    q.includes("date of the month") ||
+    q.includes("day of the month") ||
+    q.includes("day of month") ||
+    q.includes("todays date") ||
+    q.includes("today's date") ||
+    q.includes("today date") ||
+    q === "date" ||
+    q === "day" ||
+    q === "current date" ||
+    q === "current day";
+
+  if (asksDay && p.day) return String(p.day);
+  if ((q === "month" || q === "current month" || q.includes("what month")) && p.month) return String(p.month).toLowerCase();
+  if ((q === "year" || q === "current year" || q.includes("what year")) && p.year) return String(p.year);
+  return null;
+}
+
+const cleanFragment = value => String(value ?? "")
+  .replace(/\r/g, "")
+  .trim()
+  .split(/\n+/)[0]
+  .replace(/^(?:ANSWER|CODE)\s*:\s*/i, "")
+  .split(/\s*\|\|\s*ALT\s*:/i)[0]
+  .replace(/^['"`]+|['"`]+$/g, "")
+  .trim();
+
+function splitMultipart(question) {
+  let raw = String(question || "").trim();
+
+  raw = raw.replace(/\s*\d+\s*\/\s*\d+\s*[:\-]\s*/g, "\n");
+
+  let pieces = raw
+    .split(/[;,\n]+/)
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  if (pieces.length === 1) {
+    const m = raw.match(/^(.*\D)\s+(-?\d+(?:\.\d+)?%?)\s*$/);
+    if (m && m[1].trim()) pieces = [m[1].trim(), m[2]];
+  }
+
+  return pieces;
+}
+
+function isLiveIndexQuestion(question) {
+  const q = normalizeDirect(question);
+  return (
+    q.includes("exist count") ||
+    q.includes("copies") ||
+    q.includes("cached exist") ||
+    q.includes("exist cache") ||
+    q.includes("index total") ||
+    q.includes("brainrots in the index") ||
+    q.includes("mutations scanned") ||
+    q.includes("mutation scan count") ||
+    /how many .* exist/.test(q)
+  );
+}
+
+function edgeCacheKey(url, question) {
+  const u = new URL(url);
+  u.pathname = "/__answer_cache/" + WORKER_CACHE_VERSION + "/" + encodeURIComponent(normalizeDirect(question));
+  u.search = "";
+  return new Request(u.toString(), {method:"GET"});
+}
+
+async function getEdgeAnswer(url, question) {
+  if (isLiveIndexQuestion(question) || typeof caches === "undefined") return null;
+
+  try {
+    const hit = await caches.default.match(edgeCacheKey(url, question));
+    if (!hit) return null;
+
+    const data = await hit.json();
+    const answer = cleanFragment(data?.answer);
+    return answer || null;
+  } catch {
+    return null;
+  }
+}
+
+async function putEdgeAnswer(ctx, url, question, answer) {
+  if (isLiveIndexQuestion(question) || typeof caches === "undefined") return;
+
+  const clean = cleanFragment(answer);
+  if (!clean) return;
+
+  ctx.waitUntil((async()=>{
+    try {
+      await caches.default.put(
+        edgeCacheKey(url, question),
+        new Response(JSON.stringify({answer:clean}), {
+          headers:{
+            "content-type":"application/json",
+            "cache-control":"public, max-age=21600"
+          }
+        })
+      );
+    } catch {}
+  })());
+}
+
+let infoBookCacheText = "";
+let infoBookCacheUntil = 0;
+
+async function getInfoBook(url, env, ctx, forceFresh=false) {
+  const now = Date.now();
+
+  // Static/general riddles can reuse the already-built Info Book briefly.
+  // Live exist-count questions bypass this cache.
+  if (!forceFresh && infoBookCacheText && now < infoBookCacheUntil) {
+    return infoBookCacheText;
+  }
+
+  const response = await baseWorker.fetch(
+    new Request(new URL("/", url), {method:"GET"}),
+    env,
+    ctx
+  );
+
+  if (!response.ok) throw new Error("Info Book unavailable");
+
+  const text = await response.text();
+
+  if (!forceFresh) {
+    infoBookCacheText = text;
+    infoBookCacheUntil = now + 60000;
+  }
+
+  return text;
+}
+
+async function callGemini(env, prompt, maxOutputTokens=128) {
+  if (!env.GEMINI_API_KEY) {
+    return {ok:false,status:503,error:"AI provider not configured"};
+  }
+
+  const model = env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+  const endpoint =
+    "https://generativelanguage.googleapis.com/v1beta/models/" +
+    encodeURIComponent(model) +
+    ":generateContent?key=" +
+    encodeURIComponent(env.GEMINI_API_KEY);
+
+  const requestBody = JSON.stringify({
+    contents: [{parts: [{text: prompt}]}],
+    generationConfig: {
+      temperature: 0,
+      candidateCount: 1,
+      maxOutputTokens
+    }
+  });
+
+  let lastStatus = 0;
+
+  // Keep retries short: fast normal path, but still recover from a brief 429/5xx.
+  for (let attempt=1; attempt<=3; attempt++) {
+    try {
+      const response = await fetch(endpoint, {
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:requestBody
+      });
+
+      lastStatus = response.status;
+
+      if (response.ok) {
+        const data = await response.json();
+        const answer = String(
+          data?.candidates?.[0]?.content?.parts?.map(p => p?.text || "").join("") || ""
+        ).trim();
+
+        if (!answer) return {ok:false,status:502,error:"Empty AI answer"};
+        return {ok:true,status:response.status,answer};
+      }
+
+      const errorText = (await response.text()).slice(0,800);
+      console.error("Gemini upstream error", JSON.stringify({
+        attempt,
+        status:response.status,
+        body:errorText
+      }));
+
+      const transient =
+        response.status === 408 ||
+        response.status === 409 ||
+        response.status === 429 ||
+        response.status >= 500;
+
+      if (!transient || attempt === 3) break;
+    } catch (err) {
+      console.error("Gemini fetch exception", JSON.stringify({
+        attempt,
+        error:String(err?.message || err || "fetch failed").slice(0,800)
+      }));
+      if (attempt === 3) break;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 100 : 250));
+  }
+
+  return {
+    ok:false,
+    status:502,
+    error:"AI temporarily unavailable",
+    upstreamStatus:lastStatus || null
+  };
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    try {
+      const url = new URL(request.url);
+
+    if (url.pathname === "/" && request.method === "GET") {
+      return json({ok:false,error:"POST only"}, 405);
+    }
+
+    if (url.pathname === "/" && request.method === "POST") {
+      url.pathname = "/ask";
+      request = new Request(url.toString(), request);
+    }
+
+    if (url.pathname !== "/ask") {
+      return baseWorker.fetch(request, env, ctx);
+    }
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status:204,
+        headers:{
+          "access-control-allow-origin":"*",
+          "access-control-allow-headers":"content-type,x-riddler-token",
+          "access-control-allow-methods":"POST,OPTIONS"
+        }
+      });
+    }
+
+    if (request.method !== "POST") return json({ok:false,error:"POST only"}, 405);
+
+    const clientToken = request.headers.get("x-riddler-token") || "";
+    if (!env.RIDDLER_CLIENT_TOKEN || clientToken !== env.RIDDLER_CLIENT_TOKEN) {
+      return json({ok:false,error:"Unauthorized"}, 401);
+    }
+
+    let body;
+    try { body = await request.json(); }
+    catch { return json({ok:false,error:"Invalid JSON"}, 400); }
+
+    const originalQuestion = String(body?.question ?? body?.q ?? "").trim();
+    if (!originalQuestion) return json({ok:false,error:"Missing question"}, 400);
+    if (originalQuestion.length > 2000) return json({ok:false,error:"Question too long"}, 413);
+
+    // Zero-cost literal path.
+    if (NUMBER_ONLY.test(originalQuestion)) {
+      return json({ok:true,answer:originalQuestion});
+    }
+
+    const directDate = directDateAnswer(originalQuestion);
+    if (directDate) {
+      return json({ok:true,answer:directDate});
+    }
+
+    const pieces = splitMultipart(originalQuestion);
+    const isMultipart = pieces.length > 1;
+
+    if (!isMultipart) {
+      const direct = directAnswers.get(normalizeDirect(originalQuestion));
+      if (direct) return json({ok:true,answer:direct});
+
+      // Fast edge cache first.
+      const edgeHit = await getEdgeAnswer(url, originalQuestion);
+      if (edgeHit) return json({ok:true,answer:edgeHit});
+
+      // Then the existing shared answer store.
+      if (env.EXIST_RELAY) {
+        try {
+          const shared = await env.EXIST_RELAY.get(env.EXIST_RELAY.idFromName("eternal")).fetch(
+            new Request("https://internal/ai/shared?q=" + encodeURIComponent(originalQuestion))
+          );
+          if (shared.ok) {
+            const hit = await shared.json();
+            if (hit?.hit && hit?.answer) {
+              const answer = String(hit.answer);
+              putEdgeAnswer(ctx, url, originalQuestion, answer);
+              return json({ok:true,answer});
+            }
+          }
+        } catch {}
+      }
+    } else {
+      // Exact repeated multipart riddles can be returned immediately too.
+      const edgeHit = await getEdgeAnswer(url, originalQuestion);
+      if (edgeHit) return json({ok:true,answer:edgeHit});
+    }
+
+    let finalAnswer = "";
+
+    if (isMultipart) {
+      const slots = new Array(pieces.length);
+      const unresolved = [];
+
+      // Resolve literal/direct pieces immediately.
+      for (let i=0; i<pieces.length; i++) {
+        const piece = pieces[i];
+
+        if (NUMBER_ONLY.test(piece)) {
+          slots[i] = piece;
+          continue;
+        }
+
+        const direct = directAnswers.get(normalizeDirect(piece));
+        if (direct) {
+          slots[i] = direct;
+          continue;
+        }
+
+        unresolved.push({index:i, clue:piece});
+      }
+
+      if (unresolved.length === 0) {
+        finalAnswer = slots.join("");
+        putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
+        return json({ok:true,answer:finalAnswer});
+      }
+
+      // Check all unresolved clue caches in parallel while the Info Book is being prepared.
+      const infoPromise = getInfoBook(url, env, ctx, isLiveIndexQuestion(originalQuestion))
+        .catch(err => {
+          console.error("Info Book fetch failed; using fallback context", String(err?.message || err || "unknown"));
+          return "SAB Info Book temporarily unavailable. Solve from the supplied clues and general knowledge. Return only the answers.";
+        });
+      const cachedPieces = await Promise.all(
+        unresolved.map(row => getEdgeAnswer(url, row.clue))
+      );
+
+      const stillUnresolved = [];
+      for (let i=0; i<unresolved.length; i++) {
+        const row = unresolved[i];
+        const cached = cachedPieces[i];
+
+        if (cached) {
+          slots[row.index] = cached;
+        } else {
+          stillUnresolved.push(row);
+        }
+      }
+
+      if (stillUnresolved.length === 0) {
+        finalAnswer = slots.join("");
+        putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
+        return json({ok:true,answer:finalAnswer});
+      }
+
+      const infoBook = await infoPromise;
+
+      // ONE AI request for every clue that was not already literal/direct/cached.
+      const clueList = stillUnresolved
+        .map((row, i) => (i + 1) + ". " + row.clue)
+        .join("\n");
+
+      const prompt =
+        STORED_AI_PROMPT +
+        "\n\n=== CURRENT CONTEXT ===\n" + currentPromptContext() +
+        "\n\n=== SAB INFO BOOK ===\n" + infoBook +
+        "\n\n=== MULTIPART MODE ===\n" +
+        "Solve every clue below in order in ONE response.\n" +
+        "Return exactly one short answer per clue.\n" +
+        "Separate answers ONLY with |||.\n" +
+        "No numbering, labels, explanations, markdown, or extra text.\n" +
+        "Return exactly " + stillUnresolved.length + " fragments.\n\n" +
+        clueList;
+
+      const ai = await callGemini(
+        env,
+        prompt,
+        Math.max(64, Math.min(256, stillUnresolved.length * 48))
+      );
+
+      if (!ai.ok) {
+        return json({
+          ok:false,
+          error:ai.error,
+          upstreamStatus:ai.upstreamStatus ?? null
+        }, ai.status || 502);
+      }
+
+      let answers = String(ai.answer)
+        .split("|||")
+        .map(cleanFragment)
+        .filter(v => v !== "");
+
+      if (stillUnresolved.length === 1 && answers.length !== 1) {
+        answers = [cleanFragment(ai.answer)];
+      }
+
+      if (answers.length !== stillUnresolved.length) {
+        console.error("Multipart answer count mismatch", JSON.stringify({
+          expected:stillUnresolved.length,
+          got:answers.length,
+          raw:String(ai.answer).slice(0,800)
+        }));
+        return json({ok:false,error:"Multipart answer format error"}, 502);
+      }
+
+      for (let i=0; i<stillUnresolved.length; i++) {
+        const row = stillUnresolved[i];
+        const answer = answers[i];
+        slots[row.index] = answer;
+        putEdgeAnswer(ctx, url, row.clue, answer);
+      }
+
+      finalAnswer = slots.join("");
+    } else {
+      let infoBook = "";
+      try {
+        infoBook = await getInfoBook(
+          url,
+          env,
+          ctx,
+          isLiveIndexQuestion(originalQuestion)
+        );
+      } catch (err) {
+        console.error("Info Book fetch failed; using fallback context", String(err?.message || err || "unknown"));
+        infoBook = "SAB Info Book temporarily unavailable. Solve from the supplied question and general knowledge. Return only the answer.";
+      }
+
+      const prompt =
+        STORED_AI_PROMPT +
+        "\n\n=== CURRENT CONTEXT ===\n" + currentPromptContext() +
+        "\n\n=== SAB INFO BOOK ===\n" + infoBook +
+        "\n\n=== QUESTION ===\n" + originalQuestion +
+        "\n\nReturn only the final answer.";
+
+      const ai = await callGemini(env, prompt, 96);
+
+      if (!ai.ok) {
+        return json({
+          ok:false,
+          error:ai.error,
+          upstreamStatus:ai.upstreamStatus ?? null
+        }, ai.status || 502);
+      }
+
+      finalAnswer = cleanFragment(ai.answer);
+    }
+
+    if (!finalAnswer) return json({ok:false,error:"Empty AI answer"}, 502);
+
+    // Make the next identical request nearly instant and free.
+    putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
+
+    // Keep the existing shared-answer store in the background.
+    if (env.EXIST_RELAY) {
+      ctx.waitUntil((async()=>{
+        try {
+          await env.EXIST_RELAY.get(env.EXIST_RELAY.idFromName("eternal")).fetch(
+            new Request("https://internal/ai/shared", {
+              method:"POST",
+              headers:{
+                "content-type":"application/json",
+                "x-eternal-client-ip":request.headers.get("CF-Connecting-IP") || ""
+              },
+              body:JSON.stringify({
+                question:originalQuestion,
+                answer:finalAnswer
+              })
+            })
+          );
+        } catch {}
+      })());
+    }
+
+    return json({ok:true,answer:finalAnswer});
+    } catch (err) {
+      console.error("Unhandled /ask error", String(err?.stack || err?.message || err || "unknown").slice(0,1600));
+      return json({ok:false,error:"Worker internal error"}, 502);
+    }
+  }
+};
