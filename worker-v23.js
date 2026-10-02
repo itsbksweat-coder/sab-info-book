@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v24";
+const WORKER_CACHE_VERSION = "v25";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -203,11 +203,32 @@ function currentPromptContext() {
 
 function directDateAnswer(question) {
   const q = normalizeDirect(question);
-  let when = new Date();
 
-  if (q.includes("yesterday")) when = new Date(Date.now() - 86400000);
-  if (q.includes("tomorrow")) when = new Date(Date.now() + 86400000);
+  let offsetDays = 0;
 
+  if (q.includes("day after tomorrow")) {
+    offsetDays = 2;
+  } else if (q.includes("day before yesterday")) {
+    offsetDays = -2;
+  } else if (q.includes("tomorrow")) {
+    offsetDays = 1;
+  } else if (q.includes("yesterday")) {
+    offsetDays = -1;
+  } else {
+    const future =
+      q.match(/\bin\s+(\d+)\s+days?\b/) ||
+      q.match(/\b(\d+)\s+days?\s+from\s+now\b/) ||
+      q.match(/\b(\d+)\s+days?\s+later\b/);
+
+    const past =
+      q.match(/\b(\d+)\s+days?\s+ago\b/) ||
+      q.match(/\b(\d+)\s+days?\s+before\s+today\b/);
+
+    if (future) offsetDays = Number(future[1]) || 0;
+    if (past) offsetDays = -(Number(past[1]) || 0);
+  }
+
+  const when = new Date(Date.now() + offsetDays * 86400000);
   const p = centralDateParts(when);
 
   const asksDay =
