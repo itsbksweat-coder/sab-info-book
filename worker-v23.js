@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v23";
+const WORKER_CACHE_VERSION = "v24";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -117,6 +117,33 @@ const normalizeDirect = value => String(value || "")
   .trim();
 
 const directAnswers = new Map([
+  ["my name","sammy"],
+  ["what is my name","sammy"],
+  ["whats my name","sammy"],
+  ["what's my name","sammy"],
+  ["sammy name","sammy"],
+  ["the color of my avatar","red"],
+  ["the colour of my avatar","red"],
+  ["my avatar color","red"],
+  ["my avatar colour","red"],
+  ["my cats name","nova"],
+  ["my cat name","nova"],
+  ["my cat's name","nova"],
+  ["name of my cat","nova"],
+  ["my favorite brainrot","meowl"],
+  ["my favourite brainrot","meowl"],
+  ["favorite brainrot","meowl"],
+  ["favourite brainrot","meowl"],
+  ["my least favorite brainrot","raccooni jandelini"],
+  ["my least favourite brainrot","raccooni jandelini"],
+  ["my favorite color","blue"],
+  ["my favourite colour","blue"],
+  ["my favorite mutation","galaxy"],
+  ["my favourite mutation","galaxy"],
+  ["my birth month","february"],
+  ["my birthday month","february"],
+  ["my age","24"],
+  ["my weight","250"],
   ["the color of grass","green"],
   ["the color of the grass","green"],
   ["what color is grass","green"],
@@ -147,14 +174,14 @@ const directAnswers = new Map([
 
 const NUMBER_ONLY = /^-?\d+(?:\.\d+)?%?$/;
 
-function centralDateParts() {
+function centralDateParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Chicago",
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric"
-  }).formatToParts(new Date());
+  }).formatToParts(date);
 
   const out = {};
   for (const part of parts) {
@@ -176,7 +203,12 @@ function currentPromptContext() {
 
 function directDateAnswer(question) {
   const q = normalizeDirect(question);
-  const p = centralDateParts();
+  let when = new Date();
+
+  if (q.includes("yesterday")) when = new Date(Date.now() - 86400000);
+  if (q.includes("tomorrow")) when = new Date(Date.now() + 86400000);
+
+  const p = centralDateParts(when);
 
   const asksDay =
     q.includes("date of the month") ||
@@ -185,14 +217,44 @@ function directDateAnswer(question) {
     q.includes("todays date") ||
     q.includes("today's date") ||
     q.includes("today date") ||
+    q.includes("yesterdays date") ||
+    q.includes("yesterday's date") ||
+    q.includes("tomorrows date") ||
+    q.includes("tomorrow's date") ||
     q === "date" ||
     q === "day" ||
     q === "current date" ||
     q === "current day";
 
   if (asksDay && p.day) return String(p.day);
-  if ((q === "month" || q === "current month" || q.includes("what month")) && p.month) return String(p.month).toLowerCase();
-  if ((q === "year" || q === "current year" || q.includes("what year")) && p.year) return String(p.year);
+  if ((q === "month" || q === "current month" || q.includes("what month")) && p.month) {
+    return String(p.month).toLowerCase();
+  }
+  if ((q === "year" || q === "current year" || q.includes("what year")) && p.year) {
+    return String(p.year);
+  }
+  return null;
+}
+
+function directContextAnswer(question, context) {
+  const q = normalizeDirect(question);
+  const c = String(context || "").toLowerCase();
+
+  const asksDevice =
+    q.includes("device") &&
+    (q.includes("using") || q.includes("on") || q.includes("right now"));
+
+  if (asksDevice && c) {
+    const lines = c.split(/\r?\n/).reverse();
+    for (const line of lines) {
+      if (/\biphone\b|\bphone\b|\bmobile\b/.test(line)) return "phone";
+      if (/\blaptop\b/.test(line)) return "laptop";
+      if (/\bipad\b/.test(line)) return "ipad";
+      if (/\btablet\b/.test(line)) return "tablet";
+      if (/\bdesktop\b|\bcomputer\b|\bpc\b/.test(line)) return "computer";
+    }
+  }
+
   return null;
 }
 
@@ -207,6 +269,8 @@ const cleanFragment = value => String(value ?? "")
 
 function splitMultipart(question) {
   let raw = String(question || "").trim();
+
+  raw = raw.replace(/^\s*(?:riddle|question|clue)\s*(?:is)?\s*[:\-]\s*/i, "");
 
   raw = raw.replace(/\s*\d+\s*\/\s*\d+\s*[:\-]\s*/g, "\n");
 
@@ -429,6 +493,7 @@ export default {
     catch { return json({ok:false,error:"Invalid JSON"}, 400); }
 
     const originalQuestion = String(body?.question ?? body?.q ?? "").trim();
+    const recentContext = String(body?.context ?? "").trim().slice(0, 6000);
     if (!originalQuestion) return json({ok:false,error:"Missing question"}, 400);
     if (originalQuestion.length > 2000) return json({ok:false,error:"Question too long"}, 413);
 
@@ -437,15 +502,16 @@ export default {
       return json({ok:true,answer:originalQuestion});
     }
 
-    const directDate = directDateAnswer(originalQuestion);
-    if (directDate) {
-      return json({ok:true,answer:directDate});
-    }
-
     const pieces = splitMultipart(originalQuestion);
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
+      const directDate = directDateAnswer(originalQuestion);
+      if (directDate) return json({ok:true,answer:directDate});
+
+      const contextDirect = directContextAnswer(originalQuestion, recentContext);
+      if (contextDirect) return json({ok:true,answer:contextDirect});
+
       const direct = directAnswers.get(normalizeDirect(originalQuestion));
       if (direct) return json({ok:true,answer:direct});
 
@@ -487,6 +553,18 @@ export default {
 
         if (NUMBER_ONLY.test(piece)) {
           slots[i] = piece;
+          continue;
+        }
+
+        const directDate = directDateAnswer(piece);
+        if (directDate) {
+          slots[i] = directDate;
+          continue;
+        }
+
+        const contextDirect = directContextAnswer(piece, recentContext);
+        if (contextDirect) {
+          slots[i] = contextDirect;
           continue;
         }
 
@@ -542,7 +620,8 @@ export default {
 
       const prompt =
         STORED_AI_PROMPT +
-        "\n\n=== CURRENT CONTEXT ===\n" + currentPromptContext() +
+        "\n\n=== CURRENT DATE CONTEXT ===\n" + currentPromptContext() +
+        (recentContext ? "\n\n=== RECENT SAMMY CONTEXT ===\n" + recentContext : "") +
         "\n\n=== SAB INFO BOOK ===\n" + infoBook +
         "\n\n=== MULTIPART MODE ===\n" +
         "Solve every clue below in order in ONE response.\n" +
@@ -608,7 +687,8 @@ export default {
 
       const prompt =
         STORED_AI_PROMPT +
-        "\n\n=== CURRENT CONTEXT ===\n" + currentPromptContext() +
+        "\n\n=== CURRENT DATE CONTEXT ===\n" + currentPromptContext() +
+        (recentContext ? "\n\n=== RECENT SAMMY CONTEXT ===\n" + recentContext : "") +
         "\n\n=== SAB INFO BOOK ===\n" + infoBook +
         "\n\n=== QUESTION ===\n" + originalQuestion +
         "\n\nReturn only the final answer.";
