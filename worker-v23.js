@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v29";
+const WORKER_CACHE_VERSION = "v30";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -560,8 +560,7 @@ function uniqueModels(env) {
     env.GEMINI_MODEL,
     "gemini-3.5-flash-lite",
     "gemini-3.8-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash"
+    "gemini-3.5-flash"
   ].filter(Boolean);
 
   return [...new Set(values.map(v => String(v).trim()).filter(Boolean))];
@@ -719,7 +718,8 @@ export default {
         aiConfigured:Boolean(env.GEMINI_API_KEY),
         tokenConfigured:Boolean(env.RIDDLER_CLIENT_TOKEN),
         configuredModel:env.GEMINI_MODEL || null,
-        fallbackModels:uniqueModels(env)
+        fallbackModels:uniqueModels(env),
+        mode:"ai-first"
       });
     }
 
@@ -743,6 +743,10 @@ export default {
           detail:ai.detail ?? null
         }, ai.status || 502);
       }
+
+      modelUsed = ai.model || modelUsed;
+
+      modelUsed = ai.model || modelUsed;
 
       return json({
         ok:true,
@@ -839,6 +843,7 @@ export default {
     }
 
     let finalAnswer = "";
+    let modelUsed = null;
 
     if (isMultipart) {
       const slots = new Array(pieces.length);
@@ -883,7 +888,7 @@ export default {
       if (unresolved.length === 0) {
         finalAnswer = slots.join("");
         putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
-        return json({ok:true,answer:finalAnswer});
+        return json({ok:true,answer:finalAnswer,model:modelUsed});
       }
 
       // Check unresolved clue caches first. Avoid rebuilding the large SAB
