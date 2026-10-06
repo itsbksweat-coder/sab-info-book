@@ -98,7 +98,7 @@ A CURRENT DATE CONTEXT is supplied by the Worker. Use it for "today", "current d
 FINAL CHECK
 Before answering: use the Info Book instead of guessing SAB facts; preserve literal numbers; preserve multipart order; return only the exact requested value.`;
 
-const json = (data, status=200) => Response.json(data, {
+const json = (data, status=200) => Response.json({...data, workerVersion:WORKER_CACHE_VERSION}, {
   status,
   headers: {
     "cache-control": "no-store",
