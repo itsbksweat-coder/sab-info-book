@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v27";
+const WORKER_CACHE_VERSION = "v28";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -540,11 +540,32 @@ function selectInfoBookContext(question, infoBook, maxChars=28000) {
 function uniqueModels(env) {
   const values = [
     env.GEMINI_MODEL,
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash"
   ].filter(Boolean);
 
   return [...new Set(values.map(v => String(v).trim()).filter(Boolean))];
+}
+
+function generationConfigFor(model, maxOutputTokens) {
+  const config = {
+    temperature: 0,
+    topP: 0.1,
+    candidateCount: 1,
+    // Gemini 3 thinking tokens count toward this budget too. Keep enough room
+    // that a short answer is not accidentally cut off during reasoning.
+    maxOutputTokens: Math.max(Number(maxOutputTokens) || 128, 768)
+  };
+
+  if (String(model).startsWith("gemini-3")) {
+    config.thinkingConfig = {
+      thinkingLevel: "low"
+    };
+  }
+
+  return config;
 }
 
 async function callGemini(env, prompt, maxOutputTokens=128) {
@@ -560,24 +581,24 @@ async function callGemini(env, prompt, maxOutputTokens=128) {
     const endpoint =
       "https://generativelanguage.googleapis.com/v1beta/models/" +
       encodeURIComponent(model) +
-      ":generateContent?key=" +
-      encodeURIComponent(env.GEMINI_API_KEY);
+      ":generateContent";
 
     const requestBody = JSON.stringify({
-      contents: [{role:"user",parts:[{text:String(prompt)}]}],
-      generationConfig: {
-        temperature: 0,
-        topP: 0.1,
-        candidateCount: 1,
-        maxOutputTokens
-      }
+      contents: [{
+        role:"user",
+        parts:[{text:String(prompt)}]
+      }],
+      generationConfig: generationConfigFor(model, maxOutputTokens)
     });
 
     for (let attempt=1; attempt<=2; attempt++) {
       try {
         const response = await fetch(endpoint, {
           method:"POST",
-          headers:{"content-type":"application/json"},
+          headers:{
+            "content-type":"application/json",
+            "x-goog-api-key":String(env.GEMINI_API_KEY)
+          },
           body:requestBody
         });
 
@@ -585,14 +606,20 @@ async function callGemini(env, prompt, maxOutputTokens=128) {
 
         if (response.ok) {
           const data = await response.json();
+
           const answer = String(
             data?.candidates?.[0]?.content?.parts
-              ?.map(p => p?.text || "")
+              ?.map(part => part?.text || "")
               .join("") || ""
           ).trim();
 
           if (answer) {
-            return {ok:true,status:response.status,answer,model};
+            return {
+              ok:true,
+              status:response.status,
+              answer,
+              model
+            };
           }
 
           const finishReason =
@@ -601,11 +628,16 @@ async function callGemini(env, prompt, maxOutputTokens=128) {
             "empty";
 
           lastError = "Empty AI answer: " + finishReason;
-          console.error("Gemini empty answer", JSON.stringify({model,finishReason}));
+          console.error("Gemini empty answer", JSON.stringify({
+            model,
+            finishReason
+          }));
+
+          // Empty output from one model should try the next model.
           break;
         }
 
-        const errorText = (await response.text()).slice(0,1000);
+        const errorText = (await response.text()).slice(0,1200);
         lastError = errorText || ("HTTP " + response.status);
 
         console.error("Gemini upstream error", JSON.stringify({
@@ -618,7 +650,7 @@ async function callGemini(env, prompt, maxOutputTokens=128) {
         const modelProblem =
           response.status === 404 ||
           (response.status === 400 &&
-            /model|not found|unsupported|unknown/i.test(errorText));
+            /model|not found|unsupported|unknown|thinking/i.test(errorText));
 
         if (modelProblem) break;
 
@@ -630,7 +662,9 @@ async function callGemini(env, prompt, maxOutputTokens=128) {
 
         if (!transient || attempt === 2) break;
       } catch (err) {
-        lastError = String(err?.message || err || "fetch failed").slice(0,1000);
+        lastError = String(
+          err?.message || err || "fetch failed"
+        ).slice(0,1200);
 
         console.error("Gemini fetch exception", JSON.stringify({
           model,
@@ -668,6 +702,34 @@ export default {
         tokenConfigured:Boolean(env.RIDDLER_CLIENT_TOKEN),
         configuredModel:env.GEMINI_MODEL || null,
         fallbackModels:uniqueModels(env)
+      });
+    }
+
+    if (url.pathname === "/probe" && request.method === "POST") {
+      const clientToken = request.headers.get("x-riddler-token") || "";
+      if (!env.RIDDLER_CLIENT_TOKEN || clientToken !== env.RIDDLER_CLIENT_TOKEN) {
+        return json({ok:false,error:"Unauthorized"}, 401);
+      }
+
+      const ai = await callGemini(
+        env,
+        "Return only the exact word OK",
+        64
+      );
+
+      if (!ai.ok) {
+        return json({
+          ok:false,
+          error:ai.error,
+          upstreamStatus:ai.upstreamStatus ?? null,
+          detail:ai.detail ?? null
+        }, ai.status || 502);
+      }
+
+      return json({
+        ok:true,
+        answer:cleanFragment(ai.answer),
+        model:ai.model || null
       });
     }
 
