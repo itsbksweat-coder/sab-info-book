@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v26";
+const WORKER_CACHE_VERSION = "v27";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -453,80 +453,185 @@ async function getInfoBook(url, env, ctx, forceFresh=false) {
   return text;
 }
 
+
+function selectInfoBookContext(question, infoBook, maxChars=28000) {
+  const source = String(infoBook || "");
+  if (!source || source.length <= maxChars) return source;
+
+  const stop = new Set([
+    "the","a","an","of","in","on","at","for","from","to","is","are","was","were",
+    "what","which","who","when","where","how","my","me","i","his","her","their",
+    "best","worst","highest","lowest","most","least","brainrot","brainrots"
+  ]);
+
+  const q = normalizeDirect(question);
+  const tokens = [...new Set(
+    q.split(/\s+/)
+      .map(v => v.replace(/[^a-z0-9]/g, ""))
+      .filter(v => v.length >= 3 && !stop.has(v))
+  )];
+
+  const lines = source.split(/\r?\n/);
+  const scored = [];
+
+  for (let i=0; i<lines.length; i++) {
+    const normalized = normalizeDirect(lines[i]);
+    if (!normalized) continue;
+
+    let score = 0;
+    for (const token of tokens) {
+      if (normalized.includes(token)) {
+        score += token.length >= 8 ? 7 : token.length >= 5 ? 4 : 2;
+      }
+    }
+
+    if (q.includes("fuse") && normalized.includes("fuse")) score += 5;
+    if (q.includes("mutation") && normalized.includes("mutation")) score += 5;
+    if (q.includes("trait") && normalized.includes("trait")) score += 5;
+    if (q.includes("lucky block") && normalized.includes("lucky block")) score += 6;
+    if (q.includes("rarity") && normalized.includes("rarity")) score += 4;
+    if ((q.includes("income") || q.includes("generation")) && normalized.includes("generation")) score += 5;
+    if ((q.includes("price") || q.includes("cost")) &&
+        (normalized.includes("price") || normalized.includes("cost"))) score += 5;
+
+    if (score > 0) scored.push({i, score});
+  }
+
+  if (!scored.length) return source.slice(0, maxChars);
+
+  scored.sort((a,b) => b.score - a.score || a.i - b.i);
+
+  const selected = new Set();
+  for (const row of scored.slice(0, 140)) {
+    for (let j=Math.max(0,row.i-2); j<=Math.min(lines.length-1,row.i+2); j++) {
+      selected.add(j);
+    }
+  }
+
+  let out = "";
+  for (const i of [...selected].sort((a,b)=>a-b)) {
+    const next = lines[i] + "\n";
+    if (out.length + next.length > maxChars) break;
+    out += next;
+  }
+
+  return out || source.slice(0, maxChars);
+}
+
+function uniqueModels(env) {
+  const values = [
+    env.GEMINI_MODEL,
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash"
+  ].filter(Boolean);
+
+  return [...new Set(values.map(v => String(v).trim()).filter(Boolean))];
+}
+
 async function callGemini(env, prompt, maxOutputTokens=128) {
   if (!env.GEMINI_API_KEY) {
     return {ok:false,status:503,error:"AI provider not configured"};
   }
 
-  const model = env.GEMINI_MODEL || "gemini-3.5-flash-lite";
-  const endpoint =
-    "https://generativelanguage.googleapis.com/v1beta/models/" +
-    encodeURIComponent(model) +
-    ":generateContent?key=" +
-    encodeURIComponent(env.GEMINI_API_KEY);
-
-  const requestBody = JSON.stringify({
-    contents: [{parts: [{text: prompt}]}],
-    generationConfig: {
-      temperature: 0,
-      candidateCount: 1,
-      maxOutputTokens
-    }
-  });
-
+  const models = uniqueModels(env);
   let lastStatus = 0;
+  let lastError = "AI temporarily unavailable";
 
-  // Keep retries short: fast normal path, but still recover from a brief 429/5xx.
-  for (let attempt=1; attempt<=3; attempt++) {
-    try {
-      const response = await fetch(endpoint, {
-        method:"POST",
-        headers:{"content-type":"application/json"},
-        body:requestBody
-      });
+  for (const model of models) {
+    const endpoint =
+      "https://generativelanguage.googleapis.com/v1beta/models/" +
+      encodeURIComponent(model) +
+      ":generateContent?key=" +
+      encodeURIComponent(env.GEMINI_API_KEY);
 
-      lastStatus = response.status;
+    const requestBody = JSON.stringify({
+      contents: [{role:"user",parts:[{text:String(prompt)}]}],
+      generationConfig: {
+        temperature: 0,
+        topP: 0.1,
+        candidateCount: 1,
+        maxOutputTokens
+      }
+    });
 
-      if (response.ok) {
-        const data = await response.json();
-        const answer = String(
-          data?.candidates?.[0]?.content?.parts?.map(p => p?.text || "").join("") || ""
-        ).trim();
+    for (let attempt=1; attempt<=2; attempt++) {
+      try {
+        const response = await fetch(endpoint, {
+          method:"POST",
+          headers:{"content-type":"application/json"},
+          body:requestBody
+        });
 
-        if (!answer) return {ok:false,status:502,error:"Empty AI answer"};
-        return {ok:true,status:response.status,answer};
+        lastStatus = response.status;
+
+        if (response.ok) {
+          const data = await response.json();
+          const answer = String(
+            data?.candidates?.[0]?.content?.parts
+              ?.map(p => p?.text || "")
+              .join("") || ""
+          ).trim();
+
+          if (answer) {
+            return {ok:true,status:response.status,answer,model};
+          }
+
+          const finishReason =
+            data?.candidates?.[0]?.finishReason ||
+            data?.promptFeedback?.blockReason ||
+            "empty";
+
+          lastError = "Empty AI answer: " + finishReason;
+          console.error("Gemini empty answer", JSON.stringify({model,finishReason}));
+          break;
+        }
+
+        const errorText = (await response.text()).slice(0,1000);
+        lastError = errorText || ("HTTP " + response.status);
+
+        console.error("Gemini upstream error", JSON.stringify({
+          model,
+          attempt,
+          status:response.status,
+          body:errorText
+        }));
+
+        const modelProblem =
+          response.status === 404 ||
+          (response.status === 400 &&
+            /model|not found|unsupported|unknown/i.test(errorText));
+
+        if (modelProblem) break;
+
+        const transient =
+          response.status === 408 ||
+          response.status === 409 ||
+          response.status === 429 ||
+          response.status >= 500;
+
+        if (!transient || attempt === 2) break;
+      } catch (err) {
+        lastError = String(err?.message || err || "fetch failed").slice(0,1000);
+
+        console.error("Gemini fetch exception", JSON.stringify({
+          model,
+          attempt,
+          error:lastError
+        }));
+
+        if (attempt === 2) break;
       }
 
-      const errorText = (await response.text()).slice(0,800);
-      console.error("Gemini upstream error", JSON.stringify({
-        attempt,
-        status:response.status,
-        body:errorText
-      }));
-
-      const transient =
-        response.status === 408 ||
-        response.status === 409 ||
-        response.status === 429 ||
-        response.status >= 500;
-
-      if (!transient || attempt === 3) break;
-    } catch (err) {
-      console.error("Gemini fetch exception", JSON.stringify({
-        attempt,
-        error:String(err?.message || err || "fetch failed").slice(0,800)
-      }));
-      if (attempt === 3) break;
+      await new Promise(resolve => setTimeout(resolve, 120));
     }
-
-    await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 100 : 250));
   }
 
   return {
     ok:false,
     status:502,
-    error:"AI temporarily unavailable",
-    upstreamStatus:lastStatus || null
+    error:"AI unavailable across model fallbacks",
+    upstreamStatus:lastStatus || null,
+    detail:lastError
   };
 }
 
@@ -541,7 +646,9 @@ export default {
         worker:"riddler",
         version:WORKER_CACHE_VERSION,
         aiConfigured:Boolean(env.GEMINI_API_KEY),
-        tokenConfigured:Boolean(env.RIDDLER_CLIENT_TOKEN)
+        tokenConfigured:Boolean(env.RIDDLER_CLIENT_TOKEN),
+        configuredModel:env.GEMINI_MODEL || null,
+        fallbackModels:uniqueModels(env)
       });
     }
 
@@ -726,11 +833,15 @@ export default {
         .map((row, i) => (i + 1) + ". " + row.clue)
         .join("\n");
 
+      const infoContext = needsInfoBook
+        ? selectInfoBookContext(clueList, infoBook)
+        : infoBook;
+
       const prompt =
         STORED_AI_PROMPT +
         "\n\n=== CURRENT DATE CONTEXT ===\n" + currentPromptContext() +
         (recentContext ? "\n\n=== RECENT SAMMY CONTEXT ===\n" + recentContext : "") +
-        "\n\n=== SAB INFO BOOK ===\n" + infoBook +
+        "\n\n=== RELEVANT SAB INFO BOOK ===\n" + infoContext +
         "\n\n=== MULTIPART MODE ===\n" +
         "Solve every clue below in order in ONE response.\n" +
         "Return exactly one short answer per clue.\n" +
@@ -749,7 +860,8 @@ export default {
         return json({
           ok:false,
           error:ai.error,
-          upstreamStatus:ai.upstreamStatus ?? null
+          upstreamStatus:ai.upstreamStatus ?? null,
+          detail:ai.detail ?? null
         }, ai.status || 502);
       }
 
@@ -796,11 +908,15 @@ export default {
         }
       }
 
+      const infoContext = looksSabSpecific(originalQuestion)
+        ? selectInfoBookContext(originalQuestion, infoBook)
+        : infoBook;
+
       const prompt =
         STORED_AI_PROMPT +
         "\n\n=== CURRENT DATE CONTEXT ===\n" + currentPromptContext() +
         (recentContext ? "\n\n=== RECENT SAMMY CONTEXT ===\n" + recentContext : "") +
-        "\n\n=== SAB INFO BOOK ===\n" + infoBook +
+        "\n\n=== RELEVANT SAB INFO BOOK ===\n" + infoContext +
         "\n\n=== QUESTION ===\n" + originalQuestion +
         "\n\nReturn only the final answer.";
 
@@ -810,7 +926,8 @@ export default {
         return json({
           ok:false,
           error:ai.error,
-          upstreamStatus:ai.upstreamStatus ?? null
+          upstreamStatus:ai.upstreamStatus ?? null,
+          detail:ai.detail ?? null
         }, ai.status || 502);
       }
 
