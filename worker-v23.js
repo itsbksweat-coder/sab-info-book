@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v25";
+const WORKER_CACHE_VERSION = "v26";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -173,6 +173,63 @@ const directAnswers = new Map([
 ]);
 
 const NUMBER_ONLY = /^-?\d+(?:\.\d+)?%?$/;
+
+const CAPITALS = new Map([
+  ["france","paris"],["italy","rome"],["germany","berlin"],["spain","madrid"],
+  ["portugal","lisbon"],["japan","tokyo"],["china","beijing"],["india","newdelhi"],
+  ["canada","ottawa"],["mexico","mexicocity"],["brazil","brasilia"],["australia","canberra"],
+  ["russia","moscow"],["egypt","cairo"],["england","london"],["britain","london"],
+  ["united kingdom","london"],["south korea","seoul"],["north korea","pyongyang"],
+  ["argentina","buenosaires"],["sweden","stockholm"],["norway","oslo"],["finland","helsinki"],
+  ["denmark","copenhagen"],["ireland","dublin"],["greece","athens"],["turkey","ankara"],
+  ["thailand","bangkok"],["vietnam","hanoi"],["philippines","manila"],["indonesia","jakarta"],
+  ["singapore","singapore"],["switzerland","bern"],["austria","vienna"],["belgium","brussels"],
+  ["netherlands","amsterdam"],["poland","warsaw"],["ukraine","kyiv"],["romania","bucharest"],
+  ["hungary","budapest"],["czechia","prague"],["czech republic","prague"],["iceland","reykjavik"],
+  ["cuba","havana"],["peru","lima"],["chile","santiago"],["colombia","bogota"],
+  ["venezuela","caracas"],["morocco","rabat"],["kenya","nairobi"],["nigeria","abuja"],
+  ["ethiopia","addisababa"],["new zealand","wellington"],["united states","washingtondc"],
+  ["usa","washingtondc"],["america","washingtondc"]
+]);
+
+const CAPITAL_CITY_SELF = new Map([
+  ["paris","paris"],["rome","rome"],["berlin","berlin"],["madrid","madrid"],["lisbon","lisbon"],
+  ["tokyo","tokyo"],["beijing","beijing"],["ottawa","ottawa"],["brasilia","brasilia"],
+  ["canberra","canberra"],["moscow","moscow"],["cairo","cairo"],["london","london"],
+  ["seoul","seoul"],["oslo","oslo"],["helsinki","helsinki"],["copenhagen","copenhagen"],
+  ["dublin","dublin"],["athens","athens"],["ankara","ankara"],["bangkok","bangkok"],
+  ["hanoi","hanoi"],["manila","manila"],["jakarta","jakarta"],["bern","bern"],
+  ["vienna","vienna"],["brussels","brussels"],["amsterdam","amsterdam"],["warsaw","warsaw"],
+  ["kyiv","kyiv"],["prague","prague"],["reykjavik","reykjavik"],["havana","havana"],
+  ["lima","lima"],["santiago","santiago"],["bogota","bogota"],["caracas","caracas"],
+  ["rabat","rabat"],["nairobi","nairobi"],["abuja","abuja"],["wellington","wellington"]
+]);
+
+function directGenericAnswer(question) {
+  const q = normalizeDirect(question);
+
+  const literalWord =
+    q.match(/^the word ([a-z0-9]+)$/) ||
+    q.match(/^word ([a-z0-9]+)$/) ||
+    q.match(/^the literal word ([a-z0-9]+)$/);
+  if (literalWord) return literalWord[1];
+
+  if (q.includes("capital")) {
+    for (const [country, capital] of CAPITALS) {
+      if (q.includes(country)) return capital;
+    }
+    for (const [city, answer] of CAPITAL_CITY_SELF) {
+      if (q.includes(city)) return answer;
+    }
+  }
+
+  return null;
+}
+
+function looksSabSpecific(question) {
+  const q = normalizeDirect(question);
+  return /\b(brainrot|mutation|rarity|fuse|craft|lucky block|admin abuse|sammy|meowl|jandelini|exist count|index|trait|base skin|red carpet|income per second|generation|og)\b/.test(q);
+}
 
 function centralDateParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -478,8 +535,18 @@ export default {
     try {
       const url = new URL(request.url);
 
+    if (url.pathname === "/health" && request.method === "GET") {
+      return json({
+        ok:true,
+        worker:"riddler",
+        version:WORKER_CACHE_VERSION,
+        aiConfigured:Boolean(env.GEMINI_API_KEY),
+        tokenConfigured:Boolean(env.RIDDLER_CLIENT_TOKEN)
+      });
+    }
+
     if (url.pathname === "/" && request.method === "GET") {
-      return json({ok:false,error:"POST only"}, 405);
+      return json({ok:false,error:"POST only",health:"/health"}, 405);
     }
 
     if (url.pathname === "/" && request.method === "POST") {
@@ -527,6 +594,9 @@ export default {
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
+      const genericDirect = directGenericAnswer(originalQuestion);
+      if (genericDirect) return json({ok:true,answer:genericDirect});
+
       const directDate = directDateAnswer(originalQuestion);
       if (directDate) return json({ok:true,answer:directDate});
 
@@ -577,6 +647,12 @@ export default {
           continue;
         }
 
+        const genericDirect = directGenericAnswer(piece);
+        if (genericDirect) {
+          slots[i] = genericDirect;
+          continue;
+        }
+
         const directDate = directDateAnswer(piece);
         if (directDate) {
           slots[i] = directDate;
@@ -604,12 +680,8 @@ export default {
         return json({ok:true,answer:finalAnswer});
       }
 
-      // Check all unresolved clue caches in parallel while the Info Book is being prepared.
-      const infoPromise = getInfoBook(url, env, ctx, isLiveIndexQuestion(originalQuestion))
-        .catch(err => {
-          console.error("Info Book fetch failed; using fallback context", String(err?.message || err || "unknown"));
-          return "SAB Info Book temporarily unavailable. Solve from the supplied clues and general knowledge. Return only the answers.";
-        });
+      // Check unresolved clue caches first. Avoid rebuilding the large SAB
+      // Info Book for ordinary real-world trivia.
       const cachedPieces = await Promise.all(
         unresolved.map(row => getEdgeAnswer(url, row.clue))
       );
@@ -632,7 +704,22 @@ export default {
         return json({ok:true,answer:finalAnswer});
       }
 
-      const infoBook = await infoPromise;
+      const needsInfoBook = stillUnresolved.some(row => looksSabSpecific(row.clue));
+      let infoBook = "No SAB Info Book needed for these general-knowledge clues.";
+
+      if (needsInfoBook) {
+        try {
+          infoBook = await getInfoBook(
+            url,
+            env,
+            ctx,
+            isLiveIndexQuestion(originalQuestion)
+          );
+        } catch (err) {
+          console.error("Info Book fetch failed; using fallback context", String(err?.message || err || "unknown"));
+          infoBook = "SAB Info Book temporarily unavailable. Solve from the supplied clues and general knowledge. Return only the answers.";
+        }
+      }
 
       // ONE AI request for every clue that was not already literal/direct/cached.
       const clueList = stillUnresolved
@@ -693,17 +780,20 @@ export default {
 
       finalAnswer = slots.join("");
     } else {
-      let infoBook = "";
-      try {
-        infoBook = await getInfoBook(
-          url,
-          env,
-          ctx,
-          isLiveIndexQuestion(originalQuestion)
-        );
-      } catch (err) {
-        console.error("Info Book fetch failed; using fallback context", String(err?.message || err || "unknown"));
-        infoBook = "SAB Info Book temporarily unavailable. Solve from the supplied question and general knowledge. Return only the answer.";
+      let infoBook = "No SAB Info Book needed for this general-knowledge question.";
+
+      if (looksSabSpecific(originalQuestion)) {
+        try {
+          infoBook = await getInfoBook(
+            url,
+            env,
+            ctx,
+            isLiveIndexQuestion(originalQuestion)
+          );
+        } catch (err) {
+          console.error("Info Book fetch failed; using fallback context", String(err?.message || err || "unknown"));
+          infoBook = "SAB Info Book temporarily unavailable. Solve from the supplied question and general knowledge. Return only the answer.";
+        }
       }
 
       const prompt =
