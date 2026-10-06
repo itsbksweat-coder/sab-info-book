@@ -214,6 +214,25 @@ function directGenericAnswer(question) {
     q.match(/^the literal word ([a-z0-9]+)$/);
   if (literalWord) return literalWord[1];
 
+  // Flexible Sammy/persona phrasing should never need an upstream AI call.
+  if (q.includes("least favorite brainrot") || q.includes("least favourite brainrot")) {
+    return "raccooni jandelini";
+  }
+  if (q.includes("favorite brainrot") || q.includes("favourite brainrot")) {
+    return "meowl";
+  }
+  if (q.includes("favorite color") || q.includes("favourite colour")) {
+    return "blue";
+  }
+  if (q.includes("favorite mutation") || q.includes("favourite mutation")) {
+    return "galaxy";
+  }
+  if (q.includes("cat") && q.includes("name")) return "nova";
+  if (q.includes("birth") && q.includes("month")) return "february";
+  if (q.includes("travis") && q.includes("album")) return "astro world";
+  if ((q.includes("my age") || q.includes("sammy age") || q.includes("how old is sammy"))) return "24";
+  if ((q.includes("my weight") || q.includes("sammy weight") || q.includes("how much does sammy weigh"))) return "250";
+
   if (q.includes("capital")) {
     for (const [country, capital] of CAPITALS) {
       if (q.includes(country)) return capital;
