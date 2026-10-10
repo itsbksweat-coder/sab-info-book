@@ -557,15 +557,36 @@ function selectInfoBookContext(question, infoBook, maxChars=28000) {
 
 function uniqueModels(env) {
   const values = [
-    env.CLAUDE_MODEL,
-    "claude-sonnet-5-5"
+    env.GEMINI_MODEL,
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash"
   ].filter(Boolean);
 
   return [...new Set(values.map(v => String(v).trim()).filter(Boolean))];
 }
 
-async function callClaude(env, prompt, maxOutputTokens=128) {
-  if (!env.ANTHROPIC_API_KEY) {
+function generationConfigFor(model, maxOutputTokens) {
+  const config = {
+    temperature: 0,
+    topP: 0.1,
+    candidateCount: 1,
+    // Gemini 3 thinking tokens count toward this budget too. Keep enough room
+    // that a short answer is not accidentally cut off during reasoning.
+    maxOutputTokens: Math.max(Number(maxOutputTokens) || 128, 768)
+  };
+
+  if (String(model).startsWith("gemini-3")) {
+    config.thinkingConfig = {
+      thinkingLevel: "low"
+    };
+  }
+
+  return config;
+}
+
+async function callGemini(env, prompt, maxOutputTokens=128) {
+  if (!env.GEMINI_API_KEY) {
     return {ok:false,status:503,error:"AI provider not configured"};
   }
 
@@ -574,21 +595,26 @@ async function callClaude(env, prompt, maxOutputTokens=128) {
   let lastError = "AI temporarily unavailable";
 
   for (const model of models) {
+    const endpoint =
+      "https://generativelanguage.googleapis.com/v1beta/models/" +
+      encodeURIComponent(model) +
+      ":generateContent";
+
     const requestBody = JSON.stringify({
-      model,
-      max_tokens: Math.max(Number(maxOutputTokens) || 128, 256),
-      temperature: 0,
-      messages: [{ role:"user", content:String(prompt) }]
+      contents: [{
+        role:"user",
+        parts:[{text:String(prompt)}]
+      }],
+      generationConfig: generationConfigFor(model, maxOutputTokens)
     });
 
     for (let attempt=1; attempt<=2; attempt++) {
       try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
+        const response = await fetch(endpoint, {
           method:"POST",
           headers:{
             "content-type":"application/json",
-            "x-api-key":String(env.ANTHROPIC_API_KEY),
-            "anthropic-version":"2023-06-01"
+            "x-goog-api-key":String(env.GEMINI_API_KEY)
           },
           body:requestBody
         });
@@ -599,9 +625,8 @@ async function callClaude(env, prompt, maxOutputTokens=128) {
           const data = await response.json();
 
           const answer = String(
-            data?.content
-              ?.filter(block => block?.type === "text")
-              .map(block => block?.text || "")
+            data?.candidates?.[0]?.content?.parts
+              ?.map(part => part?.text || "")
               .join("") || ""
           ).trim();
 
@@ -614,10 +639,15 @@ async function callClaude(env, prompt, maxOutputTokens=128) {
             };
           }
 
-          lastError = "Empty AI answer: " + (data?.stop_reason || "empty");
-          console.error("Claude empty answer", JSON.stringify({
+          const finishReason =
+            data?.candidates?.[0]?.finishReason ||
+            data?.promptFeedback?.blockReason ||
+            "empty";
+
+          lastError = "Empty AI answer: " + finishReason;
+          console.error("Gemini empty answer", JSON.stringify({
             model,
-            stopReason:data?.stop_reason || null
+            finishReason
           }));
 
           // Empty output from one model should try the next model.
@@ -627,7 +657,7 @@ async function callClaude(env, prompt, maxOutputTokens=128) {
         const errorText = (await response.text()).slice(0,1200);
         lastError = errorText || ("HTTP " + response.status);
 
-        console.error("Claude upstream error", JSON.stringify({
+        console.error("Gemini upstream error", JSON.stringify({
           model,
           attempt,
           status:response.status,
@@ -637,7 +667,7 @@ async function callClaude(env, prompt, maxOutputTokens=128) {
         const modelProblem =
           response.status === 404 ||
           (response.status === 400 &&
-            /model|not found|unsupported|unknown/i.test(errorText));
+            /model|not found|unsupported|unknown|thinking/i.test(errorText));
 
         if (modelProblem) break;
 
@@ -645,7 +675,6 @@ async function callClaude(env, prompt, maxOutputTokens=128) {
           response.status === 408 ||
           response.status === 409 ||
           response.status === 429 ||
-          response.status === 529 ||
           response.status >= 500;
 
         if (!transient || attempt === 2) break;
@@ -654,7 +683,7 @@ async function callClaude(env, prompt, maxOutputTokens=128) {
           err?.message || err || "fetch failed"
         ).slice(0,1200);
 
-        console.error("Claude fetch exception", JSON.stringify({
+        console.error("Gemini fetch exception", JSON.stringify({
           model,
           attempt,
           error:lastError
@@ -686,9 +715,9 @@ export default {
         ok:true,
         worker:"riddler",
         version:WORKER_CACHE_VERSION,
-        aiConfigured:Boolean(env.ANTHROPIC_API_KEY),
+        aiConfigured:Boolean(env.GEMINI_API_KEY),
         tokenConfigured:Boolean(env.RIDDLER_CLIENT_TOKEN),
-        configuredModel:env.CLAUDE_MODEL || null,
+        configuredModel:env.GEMINI_MODEL || null,
         fallbackModels:uniqueModels(env),
         mode:"ai-first"
       });
@@ -700,7 +729,7 @@ export default {
         return json({ok:false,error:"Unauthorized"}, 401);
       }
 
-      const ai = await callClaude(
+      const ai = await callGemini(
         env,
         "Return only the exact word OK",
         64
@@ -925,7 +954,7 @@ export default {
         "Return exactly " + stillUnresolved.length + " fragments.\n\n" +
         clueList;
 
-      const ai = await callClaude(
+      const ai = await callGemini(
         env,
         prompt,
         Math.max(64, Math.min(256, stillUnresolved.length * 48))
@@ -995,7 +1024,7 @@ export default {
         "\n\n=== QUESTION ===\n" + originalQuestion +
         "\n\nReturn only the final answer.";
 
-      const ai = await callClaude(env, prompt, 96);
+      const ai = await callGemini(env, prompt, 96);
 
       if (!ai.ok) {
         return json({
