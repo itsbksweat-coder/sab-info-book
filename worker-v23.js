@@ -744,10 +744,6 @@ export default {
         }, ai.status || 502);
       }
 
-      modelUsed = ai.model || modelUsed;
-
-      modelUsed = ai.model || modelUsed;
-
       return json({
         ok:true,
         answer:cleanFragment(ai.answer),
