@@ -752,7 +752,7 @@ export default {
     }
 
     if (url.pathname === "/" && request.method === "GET") {
-      return json({ok:false,error:"POST only",health:"/health"}, 405);
+      return new Response(JSON.stringify({ok:false,error:"POST only"}), {status:405, headers:{"content-type":"application/json; charset=UTF-8"}});
     }
 
     if (url.pathname === "/" && request.method === "POST") {
