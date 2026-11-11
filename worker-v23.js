@@ -128,6 +128,37 @@ A CURRENT DATE CONTEXT is supplied by the Worker. Use it for "today", "current d
 FINAL CHECK
 Before answering: use the Info Book instead of guessing SAB facts; preserve literal numbers; preserve multipart order; return only the exact requested value.`;
 
+// Keep the full prompt readable in source. Select optional sections once per request.
+const promptSections = STORED_AI_PROMPT.split(/\n\n(?=[A-Z][A-Z /0-9—-]+\n)/);
+const optionalPromptSections = new Map([
+  ["MULTIPART / CODE RIDDLES", /\b(code|concatenate|fragment|combine|join|plus|delimiter)\b/],
+  ["WORD-ORDER RULES", /\b(reverse|backwards|backward|reversed)\b/],
+  ["UPDATE / EVENT RULES", /\b(update|event|theme|release|released|launch|introduced|added|pot pumpkin)\b/],
+  ["SAMMY / ETERNAL HARD FACTS", /\b(sammy|eternal|my|me|i|his|favorite|favourite|least favorite|admin abuse|anti cheat|anticheat)\b/],
+  ["KNOWN SAB RIDDLE FACTS", /\b(brainrot|reskin|scarino|fishino|john pork|tim cheese|scorpi|scorpion|sammyni|spyderini|halloween|witching|dlc|minifigures?|toys?|tacos?|enchiladas?|dug dug dug|fuse|new mutation|eclipse|phoenix|griffin|sab|steal a brainrot|released?|trick or treating)\b/],
+  ["COMMON OBJECT COLORS", /\b(color|colour|colored|coloured|shade)\b/],
+  ["MUTATION MODIFIERS — AUTHORITATIVE LAST-WORKING GAME DATA", /\b(mutations?|modifier|multiplier|multiplies|gold|diamond|bloodrot|candy|lava|galaxy|yin yang|yinyang|radioactive|cursed|rainbow|divine|cyber|phantom|crystal|eclipse)\b|1\s*(?:\/|of)\s*1\b/],
+  ["BASE SKINS — LAST-WORKING DATA", /\b(base|skins?|one of one)\b|1\s*(?:\/|of)\s*1\b/],
+  ["RANKED 1/1 RULE", /\bone of one\b|1\s*(?:\/|of)\s*1\b/],
+  ["DATE RULES", /\b(today|tomorrow|yesterday|date|day|month|year|weekday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|current|recent|now|ago|next|last)\b/],
+]);
+
+function buildPromptContext(clues, {multipart=false, recentContext="", infoContext=""} = {}) {
+  const question = clues.toLowerCase().replace(/[^a-z0-9/]+/g, " ");
+  const selected = promptSections.filter(section => {
+    const heading = section.split("\n", 1)[0];
+    const trigger = optionalPromptSections.get(heading);
+    return !trigger || trigger.test(question) || (multipart && heading === "MULTIPART / CODE RIDDLES");
+  });
+  if (optionalPromptSections.get("DATE RULES").test(question)) {
+    selected.push("=== CURRENT DATE CONTEXT ===\n" + currentPromptContext());
+  }
+  if (recentContext) selected.push("=== RECENT SAMMY CONTEXT ===\n" + recentContext);
+  if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
+  return selected.join("\n\n");
+}
+
+
 const json = (data, status=200) => Response.json({...data, workerVersion:WORKER_CACHE_VERSION}, {
   status,
   headers: {
@@ -959,7 +990,7 @@ export default {
       }
 
       const needsInfoBook = stillUnresolved.some(row => looksSabSpecific(row.clue));
-      let infoBook = "No SAB Info Book needed for these general-knowledge clues.";
+      let infoBook = "";
 
       if (needsInfoBook) {
         try {
@@ -985,10 +1016,7 @@ export default {
         : infoBook;
 
       const prompt =
-        STORED_AI_PROMPT +
-        "\n\n=== CURRENT DATE CONTEXT ===\n" + currentPromptContext() +
-        (recentContext ? "\n\n=== RECENT SAMMY CONTEXT ===\n" + recentContext : "") +
-        "\n\n=== RELEVANT SAB INFO BOOK ===\n" + infoContext +
+        buildPromptContext(clueList, {multipart:true, recentContext, infoContext}) +
         "\n\n=== MULTIPART MODE ===\n" +
         "Solve every clue below in order in ONE response.\n" +
         "Return exactly one short answer per clue.\n" +
@@ -1039,7 +1067,7 @@ export default {
 
       finalAnswer = slots.join("");
     } else {
-      let infoBook = "No SAB Info Book needed for this general-knowledge question.";
+      let infoBook = "";
 
       if (looksSabSpecific(originalQuestion)) {
         try {
@@ -1060,10 +1088,7 @@ export default {
         : infoBook;
 
       const prompt =
-        STORED_AI_PROMPT +
-        "\n\n=== CURRENT DATE CONTEXT ===\n" + currentPromptContext() +
-        (recentContext ? "\n\n=== RECENT SAMMY CONTEXT ===\n" + recentContext : "") +
-        "\n\n=== RELEVANT SAB INFO BOOK ===\n" + infoContext +
+        buildPromptContext(originalQuestion, {recentContext, infoContext}) +
         "\n\n=== QUESTION ===\n" + originalQuestion +
         "\n\nReturn only the final answer.";
 
