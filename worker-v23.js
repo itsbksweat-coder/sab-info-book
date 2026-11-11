@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v31";
+const WORKER_CACHE_VERSION = "v32";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -65,6 +65,7 @@ SAMMY / ETERNAL HARD FACTS
 - Anti-cheat developer name: Adam
 
 KNOWN SAB RIDDLE FACTS
+- Hacker is scheduled for Saturday, November 21, 2026. Its multiplier and mechanics are unconfirmed. Use the current date and any newer client information for questions about the next mutation.
 - Scarino Crowino is a reskin of Fishino Clownino. SAB released on May 15.
 - The Brainrot associated with John Pork is Tim Cheese. For the paired earnings clue, the expected number is 5.
 - Scorpi is the second scorpion Brainrot. The first was obtained from the RNG Machine.
@@ -135,7 +136,7 @@ const optionalPromptSections = new Map([
   ["WORD-ORDER RULES", /\b(reverse|backwards|backward|reversed)\b/],
   ["UPDATE / EVENT RULES", /\b(update|event|theme|release|released|launch|introduced|added|pot pumpkin)\b/],
   ["SAMMY / ETERNAL HARD FACTS", /\b(sammy|eternal|my|me|i|his|favorite|favourite|least favorite|admin abuse|anti cheat|anticheat)\b/],
-  ["KNOWN SAB RIDDLE FACTS", /\b(brainrot|reskin|scarino|fishino|john pork|tim cheese|scorpi|scorpion|sammyni|spyderini|halloween|witching|dlc|minifigures?|toys?|tacos?|enchiladas?|dug dug dug|fuse|new mutation|eclipse|phoenix|griffin|sab|steal a brainrot|released?|trick or treating)\b/],
+  ["KNOWN SAB RIDDLE FACTS", /\b(brainrot|reskin|scarino|fishino|john pork|tim cheese|scorpi|scorpion|sammyni|spyderini|halloween|witching|dlc|minifigures?|toys?|tacos?|enchiladas?|dug dug dug|fuse|new mutation|next mutation|hacker|eclipse|phoenix|griffin|sab|steal a brainrot|released?|trick or treating)\b/],
   ["COMMON OBJECT COLORS", /\b(color|colour|colored|coloured|shade)\b/],
   ["MUTATION MODIFIERS — AUTHORITATIVE LAST-WORKING GAME DATA", /\b(mutations?|modifier|multiplier|multiplies|gold|diamond|bloodrot|candy|lava|galaxy|yin yang|yinyang|radioactive|cursed|rainbow|divine|cyber|phantom|crystal|eclipse)\b|1\s*(?:\/|of)\s*1\b/],
   ["BASE SKINS — LAST-WORKING DATA", /\b(base|skins?|one of one)\b|1\s*(?:\/|of)\s*1\b/],
@@ -331,6 +332,22 @@ function directGenericAnswer(question) {
   }
 
   return null;
+}
+
+function scheduledMutationAnswer(question) {
+  const q = normalizeDirect(question);
+  const asksAboutHacker = /\bhacker mutation\b/.test(q);
+  const asksAboutNext = /\b(?:next|upcoming) mutation\b/.test(q);
+  if (!asksAboutHacker && !asksAboutNext) return null;
+  if (!asksAboutHacker && Date.now() >= Date.parse("2026-11-21T00:00:00-06:00")) return null;
+  if (/\b(?:modifier|multiplier|odds|chance|income)\b/.test(q)) return null;
+  if (/\b(?:what month|which month)\b/.test(q)) return "november";
+  if (/\b(?:what year|which year)\b/.test(q)) return "2026";
+  if (/\b(?:day of the month|day in november)\b/.test(q)) return "21";
+  if (/\b(?:what day|which day|what weekday)\b/.test(q)) return "saturday";
+  if (/\b(?:when|date|release date)\b/.test(q)) return "november 21 2026";
+  return /^(?:(?:what is|whats|what's|name) (?:the )?)?(?:next|upcoming) mutation(?: (?:called|name))?$/.test(q)
+    ? "hacker" : null;
 }
 
 function looksSabSpecific(question) {
@@ -868,8 +885,8 @@ export default {
     }
 
     const pieces = splitMultipart(originalQuestion);
-    const useAnswerCache = !recentContext && !pieces.some(piece => directDateAnswer(piece));
-    const knownEventAnswer = piece => recentContext ? null : eventRiddleAnswers.get(normalizeDirect(piece));
+    const useAnswerCache = !recentContext && !pieces.some(piece => directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
+    const knownEventAnswer = piece => recentContext ? null : scheduledMutationAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
