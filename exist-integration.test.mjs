@@ -1,36 +1,92 @@
 import assert from 'node:assert/strict';
-import worker, {ExistRelay} from './worker-v18.js';
-import base from './worker-v17.js';
+import worker, {ExistRelay} from './worker-v23.js';
+import infoBookWorker from './worker-v18.js';
+import baseInfoBook from './worker-v17.js';
 
-const data=new Map();
-const storage={get:async k=>data.get(k),put:async(k,v)=>data.set(k,v),delete:async k=>data.delete(k),transaction:async f=>f(storage)};
-const socket=()=>({meta:{},serializeAttachment(v){this.meta=v},deserializeAttachment(){return this.meta},send(){},close(){this.closed=true}});
-const producer=socket();
-const relay=new ExistRelay({storage,getWebSockets:()=>[producer]},{ETERNAL_TOKEN:'test-token'});
-const send=m=>relay.webSocketMessage(producer,JSON.stringify(m));
-const env={EXIST_RELAY:{idFromName:v=>v,get:()=>relay}};
-base.fetch=async()=>new Response('ORIGINAL INFO BOOK',{headers:{'content-type':'text/plain'}});
-const root=()=>worker.fetch(new Request('https://example.com/'),env,{});
-assert.match(await (await root()).text(),/No completed scan/);
-await send({type:'hello',role:'producer',room:'eternal',token:'test-token'});
-await send({type:'snapshot_start',recordCount:3});
-await send({type:'snapshot_chunk',chunkIndex:1,records:[
-  {item:'Example',mutation:'Default',answer:0,raw:'PRIVATE'},
-  {item:'Example',mutation:'Gold',answer:'1,200'},
-  {item:'Example',mutation:'Diamond'}
-]});
-await send({type:'snapshot_end',chunks:1,data:{ready:true,scanning:false,player:'PRIVATE',jobId:'PRIVATE'}});
-let response=await root(),text=await response.text();
-assert(text.startsWith('ORIGINAL INFO BOOK'));
-assert(text.includes('"count":0'));assert(text.includes('"count":1200'));assert(text.includes('"count":null'));
-assert(!text.includes('PRIVATE'));assert.equal(response.headers.get('cache-control'),'no-store');
-const counts=await (await worker.fetch(new Request('https://example.com/exist/counts'),env,{})).json();
-assert.equal(counts.records.length,3);assert(counts.savedAt);
-await send({type:'snapshot_start',recordCount:2});
-await send({type:'snapshot_end',chunks:0,data:{ready:true}});
-assert.equal((await relay.publicSnapshot()).records.length,3);
-await send({type:'snapshot_start',recordCount:1});
-await send({type:'snapshot_chunk',chunkIndex:1,records:[{item:'Example',mutation:'Default',answer:42}]});
-await send({type:'snapshot_end',chunks:1,data:{ready:true,scanning:false}});
-text=await (await root()).text();assert(text.includes('"count":42'));assert(!text.includes('"count":1200'));
-console.log('PASS: base text preserved, automatic update, unknown/zero handling, privacy, interrupted scan preservation');
+const data = new Map([
+  ['latest', {chunks:1, savedAt:'2026-09-01T12:00:00.000Z', data:{player:'PRIVATE'}}],
+  ['chunk:1', [
+    {item:'Example', mutation:'Default', answer:0, raw:'PRIVATE'},
+    {item:'Example', mutation:'Gold', answer:'1,200'},
+    {item:'Example', mutation:'Diamond'}
+  ]]
+]);
+const storage = {
+  get: async key => data.get(key),
+  put: async (key, value) => data.set(key, value),
+  transaction: async callback => callback(storage)
+};
+const relay = new ExistRelay({storage});
+const env = {
+  EXIST_RELAY:{idFromName:name => name, get:() => relay},
+  RIDDLER_CLIENT_TOKEN:'test-token',
+  GEMINI_API_KEY:'test-key'
+};
+const request = (path, init) => new Request('https://example.com' + path, init);
+const background = [];
+const ctx = {waitUntil: promise => background.push(promise)};
+const run = (path, init) => worker.fetch(request(path, init), env, ctx);
+const ask = (path, question) => run(path, {
+  method:'POST',
+  headers:{'content-type':'application/json', 'x-riddler-token':'test-token'},
+  body:JSON.stringify({question})
+});
+
+assert.equal((await run('/ws')).status, 404);
+assert.equal((await run('/ws', {headers:{Upgrade:'websocket'}})).status, 404);
+assert.equal((await relay.fetch(request('/ws', {headers:{Upgrade:'websocket'}}))).status, 404);
+assert.equal((await run('/')).status, 405);
+assert.equal((await run('/health')).status, 200);
+assert.equal((await (await run('/exist/health')).json()).acceptsScans, false);
+assert.equal((await run('/ask', {method:'POST'})).status, 401);
+assert.equal((await (await ask('/', '0067')).json()).answer, '0067');
+
+const counts = await (await run('/exist/counts')).json();
+assert.deepEqual(counts.records.map(record => record.count), [0, 1200, null]);
+assert.equal(counts.savedAt, '2026-09-01T12:00:00.000Z');
+assert(!JSON.stringify(counts).includes('PRIVATE'));
+
+const originalInfoBookFetch = baseInfoBook.fetch;
+let infoBook;
+try {
+  baseInfoBook.fetch = async () => new Response('ORIGINAL INFO BOOK');
+  infoBook = await infoBookWorker.fetch(request('/'), env, {});
+} finally {
+  baseInfoBook.fetch = originalInfoBookFetch;
+}
+assert.equal(infoBook.headers.get('cache-control'), 'no-store');
+const text = await infoBook.text();
+assert.match(text, /^ORIGINAL INFO BOOK/);
+assert.match(text, /LIVE INDEX EXIST COUNTS/);
+assert.match(text, /"count":1200/);
+assert(!text.includes('PRIVATE'));
+
+for (const ip of ['192.0.2.1', '192.0.2.2']) {
+  const response = await run('/ai/shared', {
+    method:'POST',
+    headers:{'content-type':'application/json', 'cf-connecting-ip':ip},
+    body:JSON.stringify({question:'Shared answer example', answer:'Test'})
+  });
+  assert.equal(response.status, 200);
+}
+assert.equal((await (await run('/ai/shared?q=Shared+answer+example')).json()).answer, 'test');
+
+const originalFetch = globalThis.fetch;
+try {
+  globalThis.fetch = async (url, options) => {
+    assert.match(url, /^https:\/\/generativelanguage\.googleapis\.com\//);
+    const [{parts:[{text:prompt}]}] = JSON.parse(options.body).contents;
+    assert.match(prompt, /^You are TRACED RIDDLER/);
+    assert.match(prompt, /CURRENT DATE CONTEXT/);
+    assert.match(prompt, /What is the speed of sound in air\?/);
+    return Response.json({candidates:[{content:{parts:[{text:'343'}]}}]});
+  };
+  const answer = await ask('/ask', 'What is the speed of sound in air?');
+  assert.equal(answer.status, 200);
+  assert.equal((await answer.json()).answer, '343');
+  await Promise.all(background);
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
+console.log('PASS: socket route removed, saved scans and shared answers readable, Riddler routes working');
