@@ -2,6 +2,7 @@ name = "sab-info-book"
 main = "worker-v23.js"
 compatibility_date = "2026-09-01"
 
+# Preserve the existing namespace for saved scan reads and shared AI answers.
 [[durable_objects.bindings]]
 name = "EXIST_RELAY"
 class_name = "ExistRelay"
