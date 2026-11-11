@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {mock} from 'node:test';
 import worker, {ExistRelay} from './worker-v23.js';
 import infoBookWorker from './worker-v18.js';
 import baseInfoBook from './worker-v17.js';
@@ -70,6 +71,47 @@ for (const ip of ['192.0.2.1', '192.0.2.2']) {
   assert.equal(response.status, 200);
 }
 assert.equal((await (await run('/ai/shared?q=Shared+answer+example')).json()).answer, 'test');
+
+const riddles = [
+  ["what is Sammy's favorite mutation?", "yin yang"],
+  ["what brainrot is scarino crowino a reskin of? and what day in may did sab release", "fishino clownino15"],
+  ["What brainrot in sab is associated with john pork and how much $/s does he do in the game", "timcheese5"],
+  ["scorpi is the second scorpion brainrot in the game. How was the first one obtained? and how old am i", "rngmachine24"],
+  ["what was sammyni spyderini called before?", "chimpanzini spiderini"],
+  ["hat was the name of the halloween event that gave brainrots a purple hat last year?", "witchinghour"],
+  ["todays new mutation, best brainrot in the fuse, and day of the month today", "eclipsephoenix3"],
+  ["what was the rarest DLC brainrot obtained from the first minifigures we released?", "pancakeandsyrup"],
+  ["what brainrot was obtained from the trick or treating event last year?", "noomycandy"],
+  ["what does medusa have on her head (pural) and what year are we on?", "snakes2026"],
+  ["when i dont get tacos for tuesday what do i usually get? (singular)", "enchilada"],
+  ["what new brainrot is a reskin of dug dug dug? and what day is halloween", "pumpumpum31"]
+];
+
+mock.timers.enable({apis:['Date'], now:new Date('2026-10-03T12:00:00Z')});
+const previousCaches = globalThis.caches;
+const cachedAnswers = new Map();
+globalThis.caches = {default:{
+  match: async key => cachedAnswers.get(key.url)?.clone(),
+  put: async (key, value) => { cachedAnswers.set(key.url, value); }
+}};
+try {
+  for (const [question, expected] of riddles) {
+    const response = await ask('/ask', question);
+    assert.equal(response.status, 200, question);
+    assert.equal((await response.json()).answer, expected, question);
+  }
+
+  mock.timers.setTime(Date.parse('2026-10-10T12:00:00Z'));
+  const series2 = "what is the most op minifigure toy in the new series 2 minifigures and the day today";
+  assert.equal((await (await ask('/ask', series2)).json()).answer, 'griffin10');
+  assert.equal((await (await ask('/ask', riddles[6][0])).json()).answer, 'eclipsephoenix10');
+
+  mock.timers.setTime(Date.parse('2027-01-01T12:00:00Z'));
+  assert.equal((await (await ask('/ask', riddles[9][0])).json()).answer, 'snakes2027');
+} finally {
+  globalThis.caches = previousCaches;
+  mock.timers.reset();
+}
 
 const originalFetch = globalThis.fetch;
 try {

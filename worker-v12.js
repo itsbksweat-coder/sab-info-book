@@ -4,12 +4,12 @@ const SAMMY_FAVORITE_MUTATION_SYNONYMS = String.raw`
 
 SAMMY FAVORITE MUTATION — V12
 =============================
-Canonical answer: Galaxy
+Canonical answer: Yin Yang
 
 Fact:
-- Sammy's favorite mutation is Galaxy.
+- Sammy's favorite mutation is Yin Yang.
 
-Treat all of the following as asking for Galaxy:
+Treat all of the following as asking for Yin Yang:
 - Sammy's favorite mutation
 - Sammys favorite mutation
 - Sammy favorite mutation
@@ -91,7 +91,7 @@ Normalization / inference:
 - Sammy's = Sammys = Sammy when possessive meaning is otherwise clear.
 - Question fillers such as what, which, is, does, tell me, give me, name, and please do not change the meaning.
 - Punctuation, apostrophe style, capitalization, repeated spaces, hyphens, and harmless word-order variations do not change the match when the meaning remains unambiguous.
-- Canonical output must be exactly: Galaxy
+- Canonical output must be exactly: Yin Yang
 
 ONGOING USER-ADDED FACT RULE
 - For user-added Info Book facts, include natural synonyms/aliases whenever alternate wording is reasonably required to solve the same fact.

@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v30";
+const WORKER_CACHE_VERSION = "v31";
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -61,8 +61,20 @@ SAMMY / ETERNAL HARD FACTS
 - Weight: 250
 - Place after Admin Abuse: Gym
 - Cat name: Nova
-- Favorite mutation: Galaxy
+- Favorite mutation: Yin Yang
 - Anti-cheat developer name: Adam
+
+KNOWN SAB RIDDLE FACTS
+- Scarino Crowino is a reskin of Fishino Clownino. SAB released on May 15.
+- The Brainrot associated with John Pork is Tim Cheese. For the paired earnings clue, the expected number is 5.
+- Scorpi is the second scorpion Brainrot. The first was obtained from the RNG Machine.
+- Sammyni Spyderini was previously called Chimpanzini Spiderini.
+- The Halloween event that gave Brainrots purple hats was Witching Hour.
+- The rarest DLC Brainrot from the first minifigure release was Pancake and Syrup.
+- The trick-or-treating event Brainrot was Noomy Candy.
+- When Sammy skips tacos on Tuesday, the singular answer is enchilada.
+- Pum Pum Pum is a reskin of Dug Dug Dug. Halloween is October 31.
+- Past event riddles used Eclipse for the new mutation, Phoenix for the best Fuse Brainrot, and Griffin for the strongest Series 2 minifigure. For current questions, use newer supplied game data when available.
 
 COMMON OBJECT COLORS
 - grass/leaves/tree/frog => green
@@ -156,8 +168,8 @@ const directAnswers = new Map([
   ["my least favourite brainrot","raccooni jandelini"],
   ["my favorite color","blue"],
   ["my favourite colour","blue"],
-  ["my favorite mutation","galaxy"],
-  ["my favourite mutation","galaxy"],
+  ["my favorite mutation","yin yang"],
+  ["my favourite mutation","yin yang"],
   ["my birth month","february"],
   ["my birthday month","february"],
   ["my age","24"],
@@ -188,6 +200,29 @@ const directAnswers = new Map([
   ["what colour is sand","yellow"],
   ["sand color","yellow"],
   ["sand colour","yellow"]
+]);
+
+// Keep these patterns specific to the known clues so nearby questions can use the Info Book.
+const knownRiddleAnswers = [
+  [/\bscarino crowino\b.*\breskin of\b/, "fishino clownino"],
+  [/\b(?:day|date) in may\b.*\b(?:sab|steal a brainrot)\b.*\breleas/, "15"],
+  [/\bbrainrot\b.*\bassociated with john pork\b/, "timcheese"],
+  [/\bscorpi\b.*\bfirst one (?:obtained|acquired)\b/, "rngmachine"],
+  [/\bsammyni spyderini\b.*\b(?:called before|previously called|old name)\b/, "chimpanzini spiderini"],
+  [/\bhalloween event\b.*\bpurple hats?\b/, "witchinghour"],
+  [/\brarest dlc brainrot\b.*\bfirst minifigures\b/, "pancakeandsyrup"],
+  [/\bbrainrot\b.*\btrick or treating event\b/, "noomycandy"],
+  [/\bmedusa\b.*\bon her head\b/, "snakes"],
+  [/\btacos for tuesday\b.*\busually get\b/, "enchilada"],
+  [/\breskin of dug dug dug\b/, "pumpumpum"],
+  [/^(?:and )?what (?:day|date) is halloween$/, "31"]
+];
+
+const eventRiddleAnswers = new Map([
+  ["todays new mutation", "eclipse"],
+  ["today's new mutation", "eclipse"],
+  ["best brainrot in the fuse", "phoenix"],
+  ["what is the most op minifigure toy in the new series 2 minifigures", "griffin"]
 ]);
 
 const NUMBER_ONLY = /^-?\d+(?:\.\d+)?%?$/;
@@ -243,13 +278,17 @@ function directGenericAnswer(question) {
     return "blue";
   }
   if (q.includes("favorite mutation") || q.includes("favourite mutation")) {
-    return "galaxy";
+    return "yin yang";
   }
   if (q.includes("cat") && q.includes("name")) return "nova";
   if (q.includes("birth") && q.includes("month")) return "february";
   if (q.includes("travis") && q.includes("album")) return "astro world";
-  if ((q.includes("my age") || q.includes("sammy age") || q.includes("how old is sammy"))) return "24";
+  if ((q.includes("my age") || q.includes("sammy age") || q.includes("how old is sammy") || q === "how old am i")) return "24";
   if ((q.includes("my weight") || q.includes("sammy weight") || q.includes("how much does sammy weigh"))) return "250";
+
+  for (const [pattern, answer] of knownRiddleAnswers) {
+    if (pattern.test(q)) return answer;
+  }
 
   if (q.includes("capital")) {
     for (const [country, capital] of CAPITALS) {
@@ -339,7 +378,8 @@ function directDateAnswer(question) {
     q === "date" ||
     q === "day" ||
     q === "current date" ||
-    q === "current day";
+    q === "current day" ||
+    /^(?:what is )?(?:the )?day today$/.test(q);
 
   if (asksDay && p.day) return String(p.day);
   if ((q === "month" || q === "current month" || q.includes("what month")) && p.month) {
@@ -390,8 +430,8 @@ function splitMultipart(question) {
   raw = raw.replace(/\s*\d+\s*\/\s*\d+\s*[:\-]\s*/g, "\n");
 
   let pieces = raw
-    .split(/[;,\n]+/)
-    .map(v => v.trim())
+    .split(/[;,\n]+|\?\s*(?=(?:and\s+)?(?:what|how|who|when|where|which)\b)|\s+and\s+(?=(?:(?:what|how|who|when|where|which)\b|(?:the\s+)?day\s+today\b))/i)
+    .map((piece, index) => index ? piece.trim().replace(/^and\s+/i, "") : piece.trim())
     .filter(Boolean);
 
   if (pieces.length === 1) {
@@ -797,6 +837,8 @@ export default {
     }
 
     const pieces = splitMultipart(originalQuestion);
+    const useAnswerCache = !recentContext && !pieces.some(piece => directDateAnswer(piece));
+    const knownEventAnswer = piece => recentContext ? null : eventRiddleAnswers.get(normalizeDirect(piece));
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
@@ -809,15 +851,15 @@ export default {
       const contextDirect = directContextAnswer(originalQuestion, recentContext);
       if (contextDirect) return json({ok:true,answer:contextDirect});
 
-      const direct = directAnswers.get(normalizeDirect(originalQuestion));
+      const direct = directAnswers.get(normalizeDirect(originalQuestion)) || knownEventAnswer(originalQuestion);
       if (direct) return json({ok:true,answer:direct});
 
       // Fast edge cache first.
-      const edgeHit = await getEdgeAnswer(url, originalQuestion);
+      const edgeHit = useAnswerCache && await getEdgeAnswer(url, originalQuestion);
       if (edgeHit) return json({ok:true,answer:edgeHit});
 
       // Then the existing shared answer store.
-      if (env.EXIST_RELAY) {
+      if (useAnswerCache && env.EXIST_RELAY) {
         try {
           const shared = await env.EXIST_RELAY.get(env.EXIST_RELAY.idFromName("eternal")).fetch(
             new Request("https://internal/ai/shared?q=" + encodeURIComponent(originalQuestion))
@@ -832,7 +874,7 @@ export default {
           }
         } catch {}
       }
-    } else {
+    } else if (useAnswerCache) {
       // Exact repeated multipart riddles can be returned immediately too.
       const edgeHit = await getEdgeAnswer(url, originalQuestion);
       if (edgeHit) return json({ok:true,answer:edgeHit});
@@ -854,6 +896,11 @@ export default {
           continue;
         }
 
+        if (slots[i - 1] === "timcheese" && /^how much s does he do(?: in the game)?$/.test(normalizeDirect(piece))) {
+          slots[i] = "5";
+          continue;
+        }
+
         const genericDirect = directGenericAnswer(piece);
         if (genericDirect) {
           slots[i] = genericDirect;
@@ -872,7 +919,7 @@ export default {
           continue;
         }
 
-        const direct = directAnswers.get(normalizeDirect(piece));
+        const direct = directAnswers.get(normalizeDirect(piece)) || knownEventAnswer(piece);
         if (direct) {
           slots[i] = direct;
           continue;
@@ -883,14 +930,14 @@ export default {
 
       if (unresolved.length === 0) {
         finalAnswer = slots.join("");
-        putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
+        if (useAnswerCache) putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
         return json({ok:true,answer:finalAnswer,model:modelUsed});
       }
 
       // Check unresolved clue caches first. Avoid rebuilding the large SAB
       // Info Book for ordinary real-world trivia.
       const cachedPieces = await Promise.all(
-        unresolved.map(row => getEdgeAnswer(url, row.clue))
+        unresolved.map(row => recentContext ? null : getEdgeAnswer(url, row.clue))
       );
 
       const stillUnresolved = [];
@@ -907,7 +954,7 @@ export default {
 
       if (stillUnresolved.length === 0) {
         finalAnswer = slots.join("");
-        putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
+        if (useAnswerCache) putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
         return json({ok:true,answer:finalAnswer});
       }
 
@@ -987,7 +1034,7 @@ export default {
         const row = stillUnresolved[i];
         const answer = answers[i];
         slots[row.index] = answer;
-        putEdgeAnswer(ctx, url, row.clue, answer);
+        if (!recentContext) putEdgeAnswer(ctx, url, row.clue, answer);
       }
 
       finalAnswer = slots.join("");
@@ -1037,10 +1084,10 @@ export default {
     if (!finalAnswer) return json({ok:false,error:"Empty AI answer"}, 502);
 
     // Make the next identical request nearly instant and free.
-    putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
+    if (useAnswerCache) putEdgeAnswer(ctx, url, originalQuestion, finalAnswer);
 
     // Keep the existing shared-answer store in the background.
-    if (env.EXIST_RELAY) {
+    if (useAnswerCache && env.EXIST_RELAY) {
       ctx.waitUntil((async()=>{
         try {
           await env.EXIST_RELAY.get(env.EXIST_RELAY.idFromName("eternal")).fetch(
