@@ -113,6 +113,21 @@ try {
   mock.timers.reset();
 }
 
+mock.timers.enable({apis:['Date'], now:new Date('2026-11-11T18:00:00Z')});
+for (const [question, expected] of [
+  ['what is the next mutation?', 'hacker'],
+  ['when does the hacker mutation release?', 'november 21 2026'],
+  ['what is the eclipse mutation multiplier?', '14'],
+  ['mutation multiplier of yin yang', '7.5'],
+  ['multiplier of the witch hat trait', '3'],
+  ['trait multiplier for Bull', 'unknown'],
+]) {
+  const response = await ask('/ask', question);
+  assert.equal(response.status, 200, question);
+  assert.equal((await response.json()).answer, expected, question);
+}
+
+mock.timers.reset();
 const originalFetch = globalThis.fetch;
 try {
   globalThis.fetch = async (url, options) => {

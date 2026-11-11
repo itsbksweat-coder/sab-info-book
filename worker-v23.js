@@ -1,7 +1,144 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v32";
+const WORKER_CACHE_VERSION = "v33";
+
+// Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
+// https://stealabrainrot.wiki/wiki/mutations/
+// https://stealabrainrot.wiki/wiki/traits/
+// https://stealabrainrot.wiki/wiki/traits/seasonal/
+const WIKI_MUTATIONS = [
+  ["Default",1,null],
+  ["Gold",1.25,"2025-05-31"],
+  ["Diamond",1.5,"2025-05-31"],
+  ["Rainbow",10,"2025-06-21"],
+  ["Bloodrot",2,"2025-06-07"],
+  ["Candy",4,"2025-07-05"],
+  ["Lava",6,"2025-07-25"],
+  ["Galaxy",7,"2025-08-23"],
+  ["Yin Yang",7.5,"2025-09-27"],
+  ["Radioactive",8.5,"2025-11-15"],
+  ["Cursed",9,"2026-01-03"],
+  ["Divine",10,"2026-02-21"],
+  ["Cyber",11,"2026-04-18"],
+  ["Phantom",12,"2026-06-13"],
+  ["Crystal",13,"2026-07-25"],
+  ["Eclipse",14,"2026-10-03"]
+];
+const WIKI_TRAITS = [
+  ["Strawberry",8],
+  ["Meowl",7],
+  ["John Pork",6.5],
+  ["Skibidi",6],
+  ["Granny",5.5],
+  ["Fire",5],
+  ["Rose",5],
+  ["Fireworks",5],
+  ["Nyan",5],
+  ["Lightning",5],
+  ["Burger",4.5],
+  ["Aura Shades",4.5],
+  ["Disco",4],
+  ["Glitched",4],
+  ["Claws",4],
+  ["Zombie",4],
+  ["Bubblegum",3],
+  ["Taco",2],
+  ["UFO",2],
+  ["Sleepy",0.5],
+  ["Bull",null],
+  ["Paint",5],
+  [":3",4.5],
+  ["Tie",3.75],
+  ["Spider",3.5],
+  ["Matteo Hat",3.5],
+  ["Galactic",3],
+  ["Explosive",3],
+  ["Shark Fin",3],
+  ["Job Application",null],
+  ["Reindeer Pet",5],
+  ["Santa Hat",4],
+  ["Jack O' Lantern Pet",4.5],
+  ["RIP Gravestone",3.5],
+  ["Witch Hat",3],
+  ["Bunny Ears",4.5],
+  ["Pink Egg",6.5],
+  ["Blue Egg",5],
+  ["Green Egg",4],
+  ["Orange Egg",3],
+  ["1 Year",5.5],
+  ["26",5],
+  ["10B",3],
+  ["Rainbow Balloon",6.5],
+  ["Pink Balloon",5.5],
+  ["Red Balloon",5],
+  ["Blue Balloon",4],
+  ["Green Balloon",3.5],
+  ["Orange Balloon",3],
+  ["Halo",5],
+  ["Bee",null],
+  ["Fire Bee",null],
+  ["Ice Bee",null],
+  ["Queen Bee",null],
+  ["Lucky",5],
+  ["Sun",5],
+  ["Ball",5],
+  ["Chocolate",4.5],
+  ["Skeleton",3],
+  ["Brazil",5],
+  ["Indonesian",4],
+  ["Sombrero",4],
+  ["Algeria",4.5],
+  ["Argentina",4.5],
+  ["Australia",4.5],
+  ["Austria",4.5],
+  ["Belgium",4.5],
+  ["Bosnia and Herzegovina",4.5],
+  ["Canada",4.5],
+  ["Cape Verde",4.5],
+  ["Colombia",null],
+  ["Croatia",4.5],
+  ["Curacao",4.5],
+  ["Czechia",4.5],
+  ["DR Congo",4.5],
+  ["Ecuador",4.5],
+  ["Egypt",4.5],
+  ["England",4.5],
+  ["France",4.5],
+  ["Germany",4.5],
+  ["Ghana",4.5],
+  ["Haiti",4.5],
+  ["Iran",4.5],
+  ["Iraq",4.5],
+  ["Ivory Coast",4.5],
+  ["Japan",4.5],
+  ["Jordan",4.5],
+  ["Mexico",4.5],
+  ["Morocco",4.5],
+  ["Netherlands",4.5],
+  ["New Zealand",4.5],
+  ["Norway",4.5],
+  ["Panama",4.5],
+  ["Paraguay",4.5],
+  ["Portugal",4.5],
+  ["Qatar",4.5],
+  ["Saudi Arabia",4.5],
+  ["Scotland",4.5],
+  ["Senegal",4.5],
+  ["South Africa",4.5],
+  ["South Korea",4.5],
+  ["Spain",4.5],
+  ["Sweden",4.5],
+  ["Switzerland",4.5],
+  ["Tunisia",4.5],
+  ["Turkey",4.5],
+  ["United States",4.5],
+  ["Uruguay",4.5],
+  ["Uzbekistan",4.5],
+  ["Comet-struck",2.5],
+  ["Snowy",2],
+  ["Wet",1.5]
+];
 
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
@@ -105,7 +242,7 @@ MUTATION MODIFIERS — AUTHORITATIVE LAST-WORKING GAME DATA
 - Phantom 11
 - Crystal 12
 - Eclipse 12.5
-When comparing mutations, use these exact game-data Modifier values. Do not substitute older multiplier values.
+Use these raw values for explicit game-data Modifier questions and tracked 1/1 comparisons. The wiki multiplier is the displayed value and can differ from the raw game field. Prefer live client data when it explicitly supplies the requested field.
 
 BASE SKINS — LAST-WORKING DATA
 1 OF 1
@@ -153,6 +290,14 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
   });
   if (optionalPromptSections.get("DATE RULES").test(question)) {
     selected.push("=== CURRENT DATE CONTEXT ===\n" + currentPromptContext());
+  }
+  if (/\bmutations?\b/.test(question)) {
+    selected.push("=== WIKI MUTATION DATA ===\nName | displayed multiplier | release date\n" +
+      WIKI_MUTATIONS.map(([name, value, date]) => name + " | " + value + "x | " + (date || "—")).join("\n"));
+  }
+  if (/\btraits?\b/.test(question)) {
+    selected.push("=== WIKI TRAIT DATA ===\nName | multiplier\n" +
+      WIKI_TRAITS.map(([name, value]) => name + " | " + (value == null ? "unpublished" : value + "x")).join("\n"));
   }
   if (recentContext) selected.push("=== RECENT SAMMY CONTEXT ===\n" + recentContext);
   if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
@@ -332,6 +477,19 @@ function directGenericAnswer(question) {
   }
 
   return null;
+}
+
+function wikiMultiplierAnswer(question) {
+  const q = normalizeDirect(question);
+  const clue = q.replace(/^(?:what is|what's|whats) /, "").replace(/^the /, "");
+  const kindFirst = clue.match(/^(mutation|trait) multiplier (?:of|for) (?:the )?(.+)$/);
+  const nameFirst = clue.match(/^(?:multiplier (?:of|for) (?:the )?)?(.+) (mutation|trait)(?: multiplier)?$/);
+  if (!kindFirst && !(nameFirst && clue.includes("multiplier"))) return null;
+  const kind = kindFirst ? kindFirst[1] : nameFirst[2];
+  const name = kindFirst ? kindFirst[2] : nameFirst[1];
+  const catalog = kind === "trait" ? WIKI_TRAITS : WIKI_MUTATIONS;
+  const entry = catalog.find(([label]) => normalizeDirect(label) === name);
+  return entry ? (entry[1] == null ? "unknown" : String(entry[1])) : null;
 }
 
 function scheduledMutationAnswer(question) {
@@ -886,7 +1044,7 @@ export default {
 
     const pieces = splitMultipart(originalQuestion);
     const useAnswerCache = !recentContext && !pieces.some(piece => directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
-    const knownEventAnswer = piece => recentContext ? null : scheduledMutationAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
+    const knownEventAnswer = piece => recentContext ? null : scheduledMutationAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
