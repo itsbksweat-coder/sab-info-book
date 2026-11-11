@@ -119,7 +119,7 @@ try {
     assert.match(url, /^https:\/\/generativelanguage\.googleapis\.com\//);
     const [{parts:[{text:prompt}]}] = JSON.parse(options.body).contents;
     assert.match(prompt, /^You are TRACED RIDDLER/);
-    assert.match(prompt, /CURRENT DATE CONTEXT/);
+    assert.doesNotMatch(prompt, /CURRENT DATE CONTEXT|MUTATION MODIFIERS|KNOWN SAB RIDDLE FACTS/);
     assert.match(prompt, /What is the speed of sound in air\?/);
     return Response.json({candidates:[{content:{parts:[{text:'343'}]}}]});
   };
