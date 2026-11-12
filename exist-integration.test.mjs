@@ -125,6 +125,12 @@ for (const [question, expected] of [
   ['release date of the Halo trait', 'february 21 2026'],
   ['the month and the day the yin yang mutation released', 'september27'],
   ['month and day that Lava mutation came out, 67', 'july2567'],
+  ['the month and the day the Strawberry Elephant came out', 'august30'],
+  ['how much per second does los dragons do', '425000000'],
+  ['how much p/s does los dragons do', '425000000'],
+  ['how much $/s does Los Dragons do', '425000000'],
+  ['what is the best new brainrot added to the game', 'Balloon Baboon'],
+  ['the worst brainrot added to the game', 'Bling Luming'],
 ]) {
   const response = await ask('/ask', question);
   assert.equal(response.status, 200, question);
