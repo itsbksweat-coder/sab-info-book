@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v40";
+const WORKER_CACHE_VERSION = "v41";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1511,11 +1511,20 @@ const CURRENT_MUTATION_CLUES = new Set(["current mutation","active mutation","li
 const HACKER_CURRENT_START = Date.parse("2026-11-20T00:00:00-06:00");
 const HACKER_SCHEDULE_END = Date.parse("2026-11-21T00:00:00-06:00");
 
-function isCurrentMutationClue(question) {
-  const clue = normalizeDirect(question)
+function normalizeMutationNameClue(question) {
+  return normalizeDirect(question)
     .replace(/^(?:(?:what|which)(?: is)?|whats|what's|name) /, "")
     .replace(/^the /, "").replace(/ (?:called|name)$/, "");
-  return CURRENT_MUTATION_CLUES.has(clue);
+}
+
+const NEXT_MUTATION_CLUES = new Set(["next mutation","upcoming mutation","next upcoming mutation","mutation that comes next","mutation comes next","mutation is next","mutation is coming next","mutation that is coming next","mutation is coming out next","mutation that comes out next","mutation comes out next","mutation coming next","mutation coming out next","mutation are we getting next","mutation we are getting next","mutation will come next","mutation that will come next","mutation will be released next","mutation is releasing next","mutation releases next","mutation that releases next","mutation will be next","mutation after this one"]);
+
+function isCurrentMutationClue(question) {
+  return CURRENT_MUTATION_CLUES.has(normalizeMutationNameClue(question));
+}
+
+function isNextMutationClue(question) {
+  return NEXT_MUTATION_CLUES.has(normalizeMutationNameClue(question));
 }
 
 function scheduledMutationAnswer(question) {
@@ -1524,6 +1533,7 @@ function scheduledMutationAnswer(question) {
     return "hacker";
   }
   const q = normalizeDirect(question).replace(/\bnext upcoming mutation\b/g, "next mutation");
+  if (isNextMutationClue(question)) return now < HACKER_SCHEDULE_END ? "hacker" : null;
   const asksAboutHacker = /\bhacker mutation\b/.test(q);
   const asksAboutNext = /\b(?:next|upcoming) mutation\b/.test(q);
   if (!asksAboutHacker && !asksAboutNext) return null;
@@ -2073,7 +2083,7 @@ export default {
     }
 
     const pieces = splitMultipart(originalQuestion);
-    const useAnswerCache = !recentContext && !/\bbrainrot (?:added|from the (?:latest|new) update)\b/.test(normalizeDirect(originalQuestion)) && !pieces.some(piece => isCurrentMutationClue(piece) || directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
+    const useAnswerCache = !recentContext && !/\bbrainrot (?:added|from the (?:latest|new) update)\b/.test(normalizeDirect(originalQuestion)) && !pieces.some(piece => isCurrentMutationClue(piece) || isNextMutationClue(piece) || directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
     const knownEventAnswer = piece => recentContext ? null : documentedTraitReleaseAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
     const isMultipart = pieces.length > 1;
 
