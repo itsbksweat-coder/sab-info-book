@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v45";
+const WORKER_CACHE_VERSION = "v46";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1251,7 +1251,8 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
   if (/\bogs?\b/.test(question)) {
     selected.push("=== RELEASED OG BRAINROTS ===\nRelease order: " + OG_RELEASE_ORDER.join(", ") +
       "\nBase income ranking, highest first: " + OG_INCOME_ORDER.join(", ") +
-      "\nInterpret first, second, and other bare ordinals as release order. Best and worst use base income. Ignore unreleased entries.");
+      "\nBase prices: " + OG_PRICE_ORDER.map(name => name + " " + formatBrainrotIncome(OG_PRICES[name])).join(", ") +
+      "\nOG rarity debuted in Update 14 on August 30, 2025. Interpret bare ordinals as release order, best and worst as base income, and cheapest and most expensive as purchase price. Ignore unreleased entries.");
   }
   if (recentContext) selected.push("=== RECENT SAMMY CONTEXT ===\n" + recentContext);
   if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
@@ -1446,6 +1447,10 @@ function formatBrainrotIncome(value) {
 const OG_RELEASE_ORDER = ["Strawberry Elephant","Meowl","Headless Horseman","Skibidi Toilet","John Pork","Spyder Elephant"];
 const OG_INCOME_ORDER = ["Spyder Elephant","Strawberry Elephant","Headless Horseman","Meowl","John Pork","Skibidi Toilet"];
 
+// Catalog prices, separate from income or trading values.
+const OG_PRICES = {"Strawberry Elephant":750000000000,"Meowl":650000000000,"Headless Horseman":600000000000,"Skibidi Toilet":450000000000,"John Pork":500000000000,"Spyder Elephant":1000000000000};
+const OG_PRICE_ORDER = Object.keys(OG_PRICES).sort((a,b) => OG_PRICES[b] - OG_PRICES[a]);
+
 function ogBrainrotAnswer(question) {
   const q = normalizeDirect(question)
     .replace(/^(?:(?:what|which)(?: is| was| are)?|what's|whats|name) /, "")
@@ -1454,7 +1459,28 @@ function ogBrainrotAnswer(question) {
     .replace(/ (?:ever )?(?:added|released)$/, "")
     .replace(/\bog rarity\b/, "og")
     .replace(/^(og(?: brainrot)?) (?:was )?(?:added|released|came) (first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th))$/, "$2 $1");
-  const lookup = name => OG_RELEASE_ORDER.find(label => normalizeDirect(label) === name);
+  const lookup = name => OG_RELEASE_ORDER.find(label => normalizeDirect(label) === name.replace(/^the /, ""));
+  const joinNames = names => names.join("").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  if (/^(?:when (?:did|was) )?og rarity (?:come out|released|added|introduced)$/.test(normalizeDirect(question).replace(/^when (did|was) the /, "when $1 "))) return "august 30 2025";
+  if (/^(?:what|which) update (?:introduced|added) (?:the )?og rarity$/.test(normalizeDirect(question))) return "14";
+  const price = q.match(/^(?:(?:base )?(?:price|cost) (?:of|for) (.+)|how much does (.+) cost)$/);
+  if (price) {
+    const name = lookup(price[1] || price[2]);
+    if (name) return formatBrainrotIncome(OG_PRICES[name]);
+  }
+  const priceRank = q.match(/^(most expensive|cheapest|least expensive) og(?: brainrot)?$/);
+  if (priceRank) return priceRank[1] === "most expensive" ? OG_PRICE_ORDER[0] : OG_PRICE_ORDER.at(-1);
+  const incomeList = q.match(/^(?:(?:list|rank|sort|name) )?(?:all )?ogs?(?: brainrots?)? (?:by (?:base )?income|from (?:strongest to weakest|weakest to strongest|best to worst|worst to best))(?: (lowest first|highest first))?$/);
+  if (incomeList) return joinNames(/weakest to strongest|worst to best|lowest first/.test(q) ? [...OG_INCOME_ORDER].reverse() : OG_INCOME_ORDER);
+  const relative = q.match(/^(?:(how many) )?(?:(?:which|what) )?ogs?(?: brainrots?)? (?:came|released|were added) (before|after) (.+)$/);
+  if (relative) {
+    const name = lookup(relative[3]);
+    if (name) {
+      const index = OG_RELEASE_ORDER.indexOf(name);
+      const list = relative[2] === "before" ? OG_RELEASE_ORDER.slice(0,index) : OG_RELEASE_ORDER.slice(index+1);
+      return relative[1] ? String(list.length) : (list.length ? joinNames(list) : "none");
+    }
+  }
   if (/^(?:how many (?:released )?ogs?(?: brainrots?)?(?: are there| exist)?|number of (?:released )?ogs?(?: brainrots?)?)$/.test(q)) return String(OG_RELEASE_ORDER.length);
   if (/^(?:list |name |all )?(?:all |the )?(?:released )?ogs?(?: brainrots?)?(?: in (?:release|chronological) order| from oldest to newest)?$/.test(q)) {
     return OG_RELEASE_ORDER.join("").replace(/[^a-z0-9]/gi, "").toLowerCase();
