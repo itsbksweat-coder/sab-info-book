@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v38";
+const WORKER_CACHE_VERSION = "v39";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1141,7 +1141,7 @@ SAMMY / ETERNAL HARD FACTS
 - Anti-cheat developer name: Adam
 
 KNOWN SAB RIDDLE FACTS
-- Hacker is scheduled for Saturday, November 21, 2026. Its multiplier and mechanics are unconfirmed. Use the current date and any newer client information for questions about the next mutation.
+- Hacker is scheduled for Saturday, November 21, 2026. Its multiplier and mechanics are unconfirmed. Through November 20, 2026 Central time, Hacker is the answer to the next upcoming mutation clue. Starting November 21, do not treat this schedule as the next mutation.
 - Scarino Crowino is a reskin of Fishino Clownino. SAB released on May 15.
 - The Brainrot associated with John Pork is Tim Cheese. For the paired earnings clue, the expected number is 5.
 - Scorpi is the second scorpion Brainrot. The first was obtained from the RNG Machine.
@@ -1508,7 +1508,7 @@ function wikiMultiplierAnswer(question) {
 }
 
 function scheduledMutationAnswer(question) {
-  const q = normalizeDirect(question);
+  const q = normalizeDirect(question).replace(/\bnext upcoming mutation\b/g, "next mutation");
   const asksAboutHacker = /\bhacker mutation\b/.test(q);
   const asksAboutNext = /\b(?:next|upcoming) mutation\b/.test(q);
   if (!asksAboutHacker && !asksAboutNext) return null;
@@ -2059,11 +2059,11 @@ export default {
 
     const pieces = splitMultipart(originalQuestion);
     const useAnswerCache = !recentContext && !/\bbrainrot (?:added|from the (?:latest|new) update)\b/.test(normalizeDirect(originalQuestion)) && !pieces.some(piece => directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
-    const knownEventAnswer = piece => recentContext ? null : scheduledMutationAnswer(piece) || documentedTraitReleaseAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
+    const knownEventAnswer = piece => recentContext ? null : documentedTraitReleaseAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
-      const releaseDate = mutationMonthDayAnswer(originalQuestion) || brainrotFactAnswer(originalQuestion, recentContext);
+      const releaseDate = scheduledMutationAnswer(originalQuestion) || mutationMonthDayAnswer(originalQuestion) || brainrotFactAnswer(originalQuestion, recentContext);
       if (releaseDate) return json({ok:true,answer:releaseDate});
       const genericDirect = directGenericAnswer(originalQuestion);
       if (genericDirect) return json({ok:true,answer:genericDirect});
@@ -2130,7 +2130,7 @@ export default {
           continue;
         }
 
-        const releaseDate = mutationMonthDayAnswer(piece) || brainrotFactAnswer(piece, recentContext);
+        const releaseDate = scheduledMutationAnswer(piece) || mutationMonthDayAnswer(piece) || brainrotFactAnswer(piece, recentContext);
         if (releaseDate) {
           slots[i] = releaseDate;
           continue;

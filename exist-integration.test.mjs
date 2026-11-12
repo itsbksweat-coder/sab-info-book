@@ -116,6 +116,8 @@ try {
 mock.timers.enable({apis:['Date'], now:new Date('2026-11-11T18:00:00Z')});
 for (const [question, expected] of [
   ['what is the next mutation?', 'hacker'],
+  ['what is the next upcoming mutation', 'hacker'],
+  ['what is the next upcoming mutation, 67', 'hacker67'],
   ['when does the hacker mutation release?', 'november 21 2026'],
   ['what is the eclipse mutation multiplier?', '14'],
   ['mutation multiplier of yin yang', '7.5'],
