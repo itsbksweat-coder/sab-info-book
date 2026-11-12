@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v43";
+const WORKER_CACHE_VERSION = "v44";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1443,12 +1443,20 @@ const OG_INCOME_ORDER = ["Spyder Elephant","Strawberry Elephant","Headless Horse
 
 function ogBrainrotAnswer(question) {
   const q = normalizeDirect(question)
-    .replace(/^(?:(?:what|which)(?: is| was)?|what's|whats|name) /, "")
+    .replace(/^(?:(?:what|which)(?: is| was| are)?|what's|whats|name) /, "")
     .replace(/^the /, "")
     .replace(/ (?:added to|released in|in) (?:the game|sab|steal a brainrot)$/, "")
     .replace(/ (?:ever )?(?:added|released)$/, "")
     .replace(/\bog rarity\b/, "og")
     .replace(/^(og(?: brainrot)?) (?:was )?(?:added|released|came) (first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th))$/, "$2 $1");
+  const list = q.match(/^(?:(top|bottom) )?(\d+|one|two|three|four|five|six)(?: (best|strongest|worst|weakest))? ogs?(?: brainrots?)?$/);
+  if (list && (list[1] || list[3])) {
+    const count = Number(list[2]) || ["one","two","three","four","five","six"].indexOf(list[2]) + 1;
+    if (count < 1 || count > OG_INCOME_ORDER.length) return null;
+    const lowest = list[1] === "bottom" || /worst|weakest/.test(list[3] || "");
+    const ranked = lowest ? [...OG_INCOME_ORDER].reverse() : OG_INCOME_ORDER;
+    return ranked.slice(0,count).join("").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  }
   const releaseOrdinal = q.match(/^(first|second|third|fourth|fifth|sixth|1st|2nd|3rd|4th|5th|6th)(?: ever| added| released)? og(?: brainrot)?$/);
   if (releaseOrdinal) {
     const ordinal = releaseOrdinal[1];
