@@ -189,3 +189,39 @@ try {
 }
 
 console.log('PASS: socket route removed, saved scans and shared answers readable, Riddler routes working');
+
+assert.equal((await run('/updates/ws')).status, 426);
+const updateData = new Map();
+const notifications = [];
+const updateSocket = {send(value) { notifications.push(JSON.parse(value)); }};
+let subscribers = [updateSocket];
+let alarms = 0;
+const updateFeed = new ExistRelay({
+  getWebSockets(tag) { assert.equal(tag, 'sab-updates'); return subscribers; },
+  storage: {
+    get: async key => updateData.get(key),
+    put: async (key, value) => updateData.set(key, value),
+    setAlarm: async () => { alarms++; }
+  }
+});
+const realFetch = globalThis.fetch;
+let updated = '2026-11-11T00:00:00Z';
+try {
+  globalThis.fetch = async url => {
+    assert.match(url, /games\.roblox\.com.*7709344486/);
+    return Response.json({data:[{id:7709344486, updated}]});
+  };
+  await updateFeed.alarm();
+  await updateFeed.alarm();
+  updated = '2026-11-12T00:00:00Z';
+  await updateFeed.alarm();
+  updated = '2026-11-11T00:00:00Z';
+  await updateFeed.alarm();
+  subscribers = [];
+  await updateFeed.alarm();
+  assert.deepEqual(notifications.map(event => event.type), ['snapshot','update']);
+  assert.equal(alarms, 4);
+} finally {
+  globalThis.fetch = realFetch;
+}
+console.log('PASS: update feed sends one baseline, one newer timestamp, and stops polling without clients');

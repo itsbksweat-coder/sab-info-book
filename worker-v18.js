@@ -1,8 +1,20 @@
 import infoBook from './worker-v17.js';
 
+const SAB_GAME_DETAILS = 'https://games.roblox.com/v1/games?universeIds=7709344486';
+const UPDATE_INTERVAL_MS = 120_000;
+const UPDATE_SOCKET_TAG = 'sab-updates';
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === '/updates/ws') {
+      if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+        return new Response('Expected a WebSocket upgrade', {status:426});
+      }
+      if (!env.EXIST_RELAY) return new Response('Update feed unavailable', {status:503});
+      const id = env.EXIST_RELAY.idFromName('sab-update-feed');
+      return env.EXIST_RELAY.get(id).fetch(request);
+    }
     if (url.pathname === '/exist/health') return Response.json({version:21, counts:'/exist/counts', sharedAnswers:'/ai/shared', infoBookIntegration:true, sharedAiAnswers:true, acceptsScans:false});
     if (url.pathname === '/exist/counts') {
       if (!env.EXIST_RELAY) return Response.json({error:'Exist storage unavailable'}, {status:503});
@@ -88,6 +100,8 @@ export class ExistRelay {
   async fetch(request) {
     const internalUrl = new URL(request.url);
 
+    if (internalUrl.pathname === '/updates/ws') return this.connectUpdateFeed(request);
+
     if (internalUrl.pathname === '/ai/shared') {
       return this.handleSharedAnswer(request, internalUrl);
     }
@@ -97,6 +111,55 @@ export class ExistRelay {
     }
     return new Response('Not Found', {status:404});
   }
+  async connectUpdateFeed(request) {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response('Expected a WebSocket upgrade', {status:426});
+    }
+    if (this.ctx.getWebSockets(UPDATE_SOCKET_TAG).length >= 100) {
+      return new Response('Update feed is full', {status:429});
+    }
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server, [UPDATE_SOCKET_TAG]);
+    const current = await this.ctx.storage.get('sabUpdatedAt');
+    if (current) server.send(JSON.stringify({type:'snapshot', updatedAt:current}));
+    if (await this.ctx.storage.getAlarm() === null) {
+      await this.ctx.storage.setAlarm(Date.now() + 1000);
+    }
+    return new Response(null, {status:101, webSocket:client});
+  }
+
+  async alarm() {
+    const sockets = this.ctx.getWebSockets(UPDATE_SOCKET_TAG);
+    if (!sockets.length) return;
+
+    try {
+      const response = await fetch(SAB_GAME_DETAILS, {signal:AbortSignal.timeout(8000)});
+      if (!response.ok) throw new Error('Roblox status ' + response.status);
+      const game = (await response.json()).data?.find(item => item.id === 7709344486);
+      const updatedAt = game?.updated;
+      if (typeof updatedAt !== 'string' || !Number.isFinite(Date.parse(updatedAt))) {
+        throw new Error('Missing Roblox update timestamp');
+      }
+      const previous = await this.ctx.storage.get('sabUpdatedAt');
+      if (!previous || Date.parse(updatedAt) > Date.parse(previous)) {
+        await this.ctx.storage.put('sabUpdatedAt', updatedAt);
+        const message = JSON.stringify({type:previous ? 'update' : 'snapshot', updatedAt});
+        for (const socket of sockets) {
+          try { socket.send(message); } catch { /* Disconnected while checking. */ }
+        }
+      }
+    } catch (error) {
+      console.warn('SAB update check failed', String(error));
+    }
+    if (this.ctx.getWebSockets(UPDATE_SOCKET_TAG).length) {
+      await this.ctx.storage.setAlarm(Date.now() + UPDATE_INTERVAL_MS);
+    }
+  }
+
+  webSocketMessage(socket) {
+    socket.close(1008, 'The update feed is read-only');
+  }
+
   async handleSharedAnswer(request, url) {
     let payload = null;
     if (request.method === 'POST') {
