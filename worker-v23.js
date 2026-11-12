@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v34";
+const WORKER_CACHE_VERSION = "v35";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -613,6 +613,18 @@ function directGenericAnswer(question) {
   return null;
 }
 
+function mutationMonthDayAnswer(question) {
+  const clue = normalizeDirect(question);
+  const match = clue.match(/^(?:what (?:is|was) )?(?:the )?month (?:and )?(?:the )?day (?:of |that |when )?(?:the )?(.+) mutation (?:was )?(?:released|came out|come out|added|introduced)$/);
+  if (!match) return null;
+  const name = match[1].replaceAll(" ", "");
+  const entry = WIKI_MUTATIONS.find(([label]) => normalizeDirect(label).replaceAll(" ", "") === name);
+  if (!entry?.[2]) return null;
+  const date = new Date(entry[2] + "T12:00:00Z");
+  const month = new Intl.DateTimeFormat("en-US", {timeZone:"UTC", month:"long"}).format(date).toLowerCase();
+  return month + date.getUTCDate();
+}
+
 function documentedTraitReleaseAnswer(question) {
   const q = normalizeDirect(question);
   const match = q.match(/^when (?:did|was) (?:the )?(.+) trait (?:come out|release|released|added|introduced)$/)
@@ -1194,6 +1206,8 @@ export default {
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
+      const releaseDate = mutationMonthDayAnswer(originalQuestion);
+      if (releaseDate) return json({ok:true,answer:releaseDate});
       const genericDirect = directGenericAnswer(originalQuestion);
       if (genericDirect) return json({ok:true,answer:genericDirect});
 
@@ -1256,6 +1270,12 @@ export default {
         const genericDirect = directGenericAnswer(piece);
         if (genericDirect) {
           slots[i] = genericDirect;
+          continue;
+        }
+
+        const releaseDate = mutationMonthDayAnswer(piece);
+        if (releaseDate) {
+          slots[i] = releaseDate;
           continue;
         }
 
