@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v44";
+const WORKER_CACHE_VERSION = "v45";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1248,6 +1248,11 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
           + (wantsDates ? " | " + (release ? release.join(": ") : "unknown") : "");
       }).join("\n"));
   }
+  if (/\bogs?\b/.test(question)) {
+    selected.push("=== RELEASED OG BRAINROTS ===\nRelease order: " + OG_RELEASE_ORDER.join(", ") +
+      "\nBase income ranking, highest first: " + OG_INCOME_ORDER.join(", ") +
+      "\nInterpret first, second, and other bare ordinals as release order. Best and worst use base income. Ignore unreleased entries.");
+  }
   if (recentContext) selected.push("=== RECENT SAMMY CONTEXT ===\n" + recentContext);
   if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
   return selected.join("\n\n");
@@ -1449,6 +1454,28 @@ function ogBrainrotAnswer(question) {
     .replace(/ (?:ever )?(?:added|released)$/, "")
     .replace(/\bog rarity\b/, "og")
     .replace(/^(og(?: brainrot)?) (?:was )?(?:added|released|came) (first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th))$/, "$2 $1");
+  const lookup = name => OG_RELEASE_ORDER.find(label => normalizeDirect(label) === name);
+  if (/^(?:how many (?:released )?ogs?(?: brainrots?)?(?: are there| exist)?|number of (?:released )?ogs?(?: brainrots?)?)$/.test(q)) return String(OG_RELEASE_ORDER.length);
+  if (/^(?:list |name |all )?(?:all |the )?(?:released )?ogs?(?: brainrots?)?(?: in (?:release|chronological) order| from oldest to newest)?$/.test(q)) {
+    return OG_RELEASE_ORDER.join("").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  }
+  const releaseRank = q.match(/^(?:release (?:rank|position) of |number og was |release rank was )(.+)$/);
+  if (releaseRank) {
+    const name = lookup(releaseRank[1]);
+    if (name) return String(OG_RELEASE_ORDER.indexOf(name) + 1);
+  }
+  const comparison = q.match(/^(?:makes|earns|generates) (more|less)(?: per second)? (.+) or (.+)$/)
+    || q.match(/^(more|less) income (.+) or (.+)$/);
+  if (comparison) {
+    const left = lookup(comparison[2]), right = lookup(comparison[3]);
+    if (left && right) {
+      const leftIncome = BRAINROT_CATALOG.find(([name]) => name === left)?.[1];
+      const rightIncome = BRAINROT_CATALOG.find(([name]) => name === right)?.[1];
+      if (leftIncome != null && leftIncome === rightIncome) return "same";
+      const leftHigher = OG_INCOME_ORDER.indexOf(left) < OG_INCOME_ORDER.indexOf(right);
+      return leftHigher === (comparison[1] === "more") ? left : right;
+    }
+  }
   const list = q.match(/^(?:(top|bottom) )?(\d+|one|two|three|four|five|six)(?: (best|strongest|worst|weakest))? ogs?(?: brainrots?)?$/);
   if (list && (list[1] || list[3])) {
     const count = Number(list[2]) || ["one","two","three","four","five","six"].indexOf(list[2]) + 1;
@@ -2121,6 +2148,8 @@ export default {
       return json({ok:true,answer:originalQuestion});
     }
 
+    const fullOgAnswer = ogBrainrotAnswer(originalQuestion);
+    if (fullOgAnswer) return json({ok:true,answer:fullOgAnswer});
     const pieces = splitMultipart(originalQuestion);
     const useAnswerCache = !recentContext && !/\bbrainrot (?:added|from the (?:latest|new) update)\b/.test(normalizeDirect(originalQuestion)) && !pieces.some(piece => isCurrentMutationClue(piece) || isNextMutationClue(piece) || directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
     const knownEventAnswer = piece => recentContext ? null : documentedTraitReleaseAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
