@@ -126,9 +126,9 @@ for (const [question, expected] of [
   ['the month and the day the yin yang mutation released', 'september27'],
   ['month and day that Lava mutation came out, 67', 'july2567'],
   ['the month and the day the Strawberry Elephant came out', 'august30'],
-  ['how much per second does los dragons do', '425000000'],
-  ['how much p/s does los dragons do', '425000000'],
-  ['how much $/s does Los Dragons do', '425000000'],
+  ['how much per second does los dragons do', '425m'],
+  ['how much p/s does los dragons do', '425m'],
+  ['how much $/s does Los Dragons do', '425m'],
   ['what is the best new brainrot added to the game', 'Balloon Baboon'],
   ['the worst brainrot added to the game', 'Bling Luming'],
 ]) {
