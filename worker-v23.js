@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v41";
+const WORKER_CACHE_VERSION = "v42";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1437,8 +1437,31 @@ function formatBrainrotIncome(value) {
   return String(value);
 }
 
+// Released OG roster and base incomes: https://stealabrainrot.wiki/wiki/rarities/
+const OG_RELEASE_ORDER = ["Strawberry Elephant","Meowl","Headless Horseman","Skibidi Toilet","John Pork","Spyder Elephant"];
+const OG_INCOME_ORDER = ["Spyder Elephant","Strawberry Elephant","Headless Horseman","Meowl","John Pork","Skibidi Toilet"];
+
+function ogBrainrotAnswer(question) {
+  const q = normalizeDirect(question)
+    .replace(/^(?:(?:what|which)(?: is| was)?|what's|whats|name) /, "")
+    .replace(/^the /, "")
+    .replace(/ (?:added to|released in|in) (?:the game|sab|steal a brainrot)$/, "")
+    .replace(/ (?:ever )?(?:added|released)$/, "")
+    .replace(/\bog rarity\b/, "og");
+  const match = q.match(/^(?:(2nd|3rd|4th|5th|6th|second|third|fourth|fifth|sixth) )?(first(?: ever| added| released)?|oldest|earliest|latest|newest|last|best|strongest|highest income|worst|weakest|lowest income) og(?: brainrot)?$/);
+  if (!match) return null;
+  const rank = ["second","third","fourth","fifth","sixth"].indexOf(match[1]) + 2;
+  const index = match[1] && /^\d/.test(match[1]) ? Number(match[1][0]) - 1 : rank - 1;
+  const kind = match[2];
+  if (/^(?:first|oldest|earliest)/.test(kind)) return OG_RELEASE_ORDER[index] || null;
+  if (/^(?:latest|newest|last)$/.test(kind)) return OG_RELEASE_ORDER.at(-1-index) || null;
+  return (/worst|weakest|lowest/.test(kind) ? OG_INCOME_ORDER.at(-1-index) : OG_INCOME_ORDER[index]) || null;
+}
+
 function brainrotFactAnswer(question, recentContext="") {
   const q = normalizeDirect(question.replace(/(?:\$|\bp)?\s*\/\s*s\b/gi, " per second "));
+  const ogAnswer = ogBrainrotAnswer(question);
+  if (ogAnswer) return ogAnswer;
   const lookup = label => BRAINROT_CATALOG.find(([name]) => normalizeDirect(name) === label.replace(/^the /, "").replace(/ brainrot$/, ""));
   const rank = q.match(/^(?:(?:what is|whats|what's) )?(?:the )?(best|worst|strongest|weakest) (?:new )?brainrot (?:added (?:to|in) (?:the game|sab|the latest update)|from the (?:latest|new) update)$/);
   if (rank) {

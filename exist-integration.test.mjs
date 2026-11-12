@@ -136,6 +136,13 @@ for (const [question, expected] of [
   ['how much $/s does Los Dragons do', '425m'],
   ['what is the best new brainrot added to the game', 'Balloon Baboon'],
   ['the worst brainrot added to the game', 'Bling Luming'],
+  ['what was the first added og brainrot added to sab', 'Strawberry Elephant'],
+  ['what was the first added og brainrot', 'Strawberry Elephant'],
+  ['what was the first og rarity brainrot', 'Strawberry Elephant'],
+  ['what is the worst og brainrot', 'Skibidi Toilet'],
+  ['what is the best og brainrot', 'Spyder Elephant'],
+  ['what is the second weakest og', 'John Pork'],
+  ['what is the newest og brainrot', 'Spyder Elephant'],
 ]) {
   const response = await ask('/ask', question);
   assert.equal(response.status, 200, question);
