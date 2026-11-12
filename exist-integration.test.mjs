@@ -121,6 +121,8 @@ for (const [question, expected] of [
   ['mutation multiplier of yin yang', '7.5'],
   ['multiplier of the witch hat trait', '3'],
   ['trait multiplier for Bull', 'unknown'],
+  ['when did witch hat trait come out?', 'october 11 2025'],
+  ['release date of the Halo trait', 'february 21 2026'],
 ]) {
   const response = await ask('/ask', question);
   assert.equal(response.status, 200, question);

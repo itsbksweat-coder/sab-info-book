@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v33";
+const WORKER_CACHE_VERSION = "v34";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -26,6 +26,8 @@ const WIKI_MUTATIONS = [
   ["Eclipse",14,"2026-10-03"]
 ];
 const WIKI_TRAITS = [
+  ["Bat",null],
+  ["Money",null],
   ["Strawberry",8],
   ["Meowl",7],
   ["John Pork",6.5],
@@ -140,6 +142,127 @@ const WIKI_TRAITS = [
   ["Wet",1.5]
 ];
 
+// Trait dates from the supplied roster. Only documented values support exact lookups.
+// https://stealabrainrot.wiki/wiki/witching-hour-event/
+// https://stealabrainrot.wiki/wiki/update-log/update-08/
+// https://stealabrainrot.wiki/wiki/update-log/update-39/
+const TRAIT_RELEASES = {
+  "26": ["reported","New Year's Machine – Jan 1, 2026"],
+  "Strawberry": ["reported","Released Aug 30, 2025 – Update 14"],
+  "Meowl": ["reported","Released Oct 18, 2025 – Update 21"],
+  "John Pork": ["reported","Released May 2, 2026 – Update 49"],
+  "Skibidi": ["reported","Released Dec 27, 2025 – Update 31"],
+  "Granny": ["reported","Released Mar 21, 2026 – Update 43"],
+  "Fire": ["reported","Released June 2025 – Update 5+"],
+  "Rose": ["reported","Released Jan 17, 2026 – Update 34"],
+  "Fireworks": ["reported","Released July 4–5, 2025 – Update 6"],
+  "Nyan": ["reported","Released June 28, 2025 – Update 5"],
+  "Lightning": ["reported","Released Summer 2025 – Admin Abuse"],
+  "Burger": ["reported","Released May 30, 2026 – Update 52.5"],
+  "Aura Shades": ["reported","Released June 6, 2026 – Update 52.75"],
+  "Disco": ["reported","Released Summer 2025 – Admin Abuse"],
+  "Glitched": ["reported","Released July 18, 2025 – Update 8"],
+  "Claws": ["reported","Released Summer 2025 – Admin Abuse"],
+  "Zombie": ["reported","Released Nov 15, 2025 – Update 25"],
+  "Bubblegum": ["documented","2025-07-18"],
+  "Taco": ["reported","Released June 28, 2025 – Update 5"],
+  "UFO": ["reported","Released Summer 2025 – Admin Abuse"],
+  "Sleepy": ["reported","Released Summer 2025 – Admin Abuse"],
+  "Bull": ["reported","Released July 25, 2026 – Update 59 / Spain Event"],
+  "Paint": ["reported","Chicleteira Bicicleteira Ritual – Late 2025"],
+  ":3": ["reported","Mi Gatito Ritual – Jan 31, 2026 / Update 36"],
+  "Tie": ["reported","Dul Dul Dul Ritual – Late 2025"],
+  "Spider": ["reported","Sammyni Spyderini Ritual – Aug 23, 2025 / Update 13"],
+  "Matteo Hat": ["reported","Matteo Ritual – Aug 23, 2025 / Update 13"],
+  "Galactic": ["reported","La Vacca Saturno Saturnita Ritual – Aug 23, 2025 / Update 13"],
+  "Explosive": ["reported","Bombardiro Crocodilo Ritual – Aug 23, 2025 / Update 13"],
+  "Shark Fin": ["reported","Orcalero Orcala Ritual – Aug 23, 2025 / Update 13"],
+  "Job Application": ["reported","Job Job Job Sahur Ritual – Aug 1, 2026 / Update 60"],
+  "Money": ["reported","Money Puggy Ritual – Sept 5, 2026 / Update 65"],
+  "Rainbow Balloon": ["reported","All released March 21, 2026 – Update 43"],
+  "Pink Balloon": ["reported","All released March 21, 2026 – Update 43"],
+  "Red Balloon": ["reported","All released March 21, 2026 – Update 43"],
+  "Blue Balloon": ["reported","All released March 21, 2026 – Update 43"],
+  "Green Balloon": ["reported","All released March 21, 2026 – Update 43"],
+  "Orange Balloon": ["reported","All released March 21, 2026 – Update 43"],
+  "Pink Egg": ["reported","Released March 28 – April 4, 2026 – Updates 44–45"],
+  "Blue Egg": ["reported","Released March 28 – April 4, 2026 – Updates 44–45"],
+  "Bunny Ears": ["reported","Released March 28 – April 4, 2026 – Updates 44–45"],
+  "Green Egg": ["reported","Released March 28 – April 4, 2026 – Updates 44–45"],
+  "Orange Egg": ["reported","Released March 28 – April 4, 2026 – Updates 44–45"],
+  "Lucky": ["reported","St. Patrick's Day – Mar 14, 2026 / Update 42"],
+  "Sun": ["reported","Summer Hour – June 13, 2026 / Update 53"],
+  "Ball": ["reported","Live Match Events – June 27, 2026 / Update 55"],
+  "Chocolate": ["reported","Valentine's Day – Feb 7, 2026 / Update 37"],
+  "Skeleton": ["reported","Extinct Event – Sept 13, 2025 / Update 16"],
+  "Jack O' Lantern Pet": ["reported","Released Oct 25, 2025 – Update 22"],
+  "RIP Gravestone": ["reported","Released Oct 25, 2025 – Update 22"],
+  "Witch Hat": ["documented","2025-10-11"],
+  "Bat": ["reported","Trick or Treat – Oct 31, 2026 / Update 73"],
+  "Bee": ["reported","All released August 8–29, 2026 – Updates 61–64"],
+  "Fire Bee": ["reported","All released August 8–29, 2026 – Updates 61–64"],
+  "Ice Bee": ["reported","All released August 8–29, 2026 – Updates 61–64"],
+  "Queen Bee": ["reported","All released August 8–29, 2026 – Updates 61–64"],
+  "1 Year": ["reported","1 Year Anniversary – May 16, 2026 / Update 51"],
+  "10B": ["reported","10 Billion Visits – Nov 15, 2025 / Update 25"],
+  "Comet-struck": ["reported","Launched starting June 28, 2025 – Update 5"],
+  "Snowy": ["reported","Launched starting June 28, 2025 – Update 5"],
+  "Wet": ["reported","Launched starting June 28, 2025 – Update 5"],
+  "Reindeer Pet": ["reported","Released Dec 13–20, 2025 – Updates 29–30"],
+  "Santa Hat": ["reported","Released Dec 6, 2025 – Update 28"],
+  "Halo": ["documented","2026-02-21"],
+  "Brazil": ["reported","Brazil Event – Aug 15, 2025 / Update 12"],
+  "Indonesian": ["reported","Indonesia Event – Oct 18, 2025 / Update 21"],
+  "Sombrero": ["reported","Mexico Event – Sept 20, 2025 / Update 17"],
+  "Algeria": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Argentina": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Australia": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Austria": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Belgium": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Bosnia and Herzegovina": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Canada": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Cape Verde": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Colombia": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Croatia": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Curacao": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Czechia": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "DR Congo": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Ecuador": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Egypt": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "England": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "France": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Germany": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Ghana": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Haiti": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Iran": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Iraq": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Ivory Coast": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Japan": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Jordan": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Mexico": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Morocco": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Netherlands": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "New Zealand": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Norway": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Panama": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Paraguay": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Portugal": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Qatar": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Saudi Arabia": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Scotland": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Senegal": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "South Africa": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "South Korea": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Spain": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Sweden": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Switzerland": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Tunisia": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Turkey": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "United States": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Uruguay": ["event date","2026-06-27 (Update 55, Futbol)"],
+  "Uzbekistan": ["event date","2026-06-27 (Update 55, Futbol)"]
+};
+
 const STORED_AI_PROMPT = `You are TRACED RIDDLER, a deterministic solver for Steal a Brainrot (SAB) riddles and code clues.
 
 PRIMARY GOAL
@@ -186,6 +309,7 @@ UPDATE / EVENT RULES
 - When asked which update/event/theme something released in, return the update/event/theme NAME if the question asks for the name.
 - Return an Update number only when the question explicitly asks for the number.
 - Pot Pumpkin release theme/name => Halloween.
+- Treat reported trait dates and event dates as approximate context. Give an exact trait debut only when documented. Money is a reported trait name with an unpublished multiplier. 1x1x1x1 is the ritual and its Brainrot reward. Glitched is the associated trait.
 
 SAMMY / ETERNAL HARD FACTS
 - Name: Sammy
@@ -296,8 +420,18 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
       WIKI_MUTATIONS.map(([name, value, date]) => name + " | " + value + "x | " + (date || "—")).join("\n"));
   }
   if (/\btraits?\b/.test(question)) {
-    selected.push("=== WIKI TRAIT DATA ===\nName | multiplier\n" +
-      WIKI_TRAITS.map(([name, value]) => name + " | " + (value == null ? "unpublished" : value + "x")).join("\n"));
+    const wantsDates = /\b(when|release|released|introduced|added|debut|date|month|year|first appeared)\b/.test(question);
+    const mentioned = WIKI_TRAITS.filter(([name]) => {
+      const key = normalizeDirect(name);
+      return key && (" " + normalizeDirect(clues) + " ").includes(" " + key + " ");
+    });
+    const rows = wantsDates && mentioned.length ? mentioned : WIKI_TRAITS;
+    selected.push("=== WIKI TRAIT DATA ===\nName | multiplier" + (wantsDates ? " | release evidence" : "") + "\n" +
+      rows.map(([name, value]) => {
+        const release = TRAIT_RELEASES[name];
+        return name + " | " + (value == null ? "unpublished" : value + "x")
+          + (wantsDates ? " | " + (release ? release.join(": ") : "unknown") : "");
+      }).join("\n"));
   }
   if (recentContext) selected.push("=== RECENT SAMMY CONTEXT ===\n" + recentContext);
   if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
@@ -477,6 +611,18 @@ function directGenericAnswer(question) {
   }
 
   return null;
+}
+
+function documentedTraitReleaseAnswer(question) {
+  const q = normalizeDirect(question);
+  const match = q.match(/^when (?:did|was) (?:the )?(.+) trait (?:come out|release|released|added|introduced)$/)
+    || q.match(/^(?:(?:what is|what's|whats) )?(?:the )?release date (?:of|for) (?:the )?(.+) trait$/);
+  if (!match) return null;
+  const entry = Object.entries(TRAIT_RELEASES).find(([name]) => normalizeDirect(name) === match[1]);
+  if (entry?.[1][0] !== "documented") return null;
+  const date = new Date(entry[1][1] + "T12:00:00Z");
+  return new Intl.DateTimeFormat("en-US", {timeZone:"UTC", month:"long", day:"numeric", year:"numeric"})
+    .format(date).replace(",", "").toLowerCase();
 }
 
 function wikiMultiplierAnswer(question) {
@@ -1044,7 +1190,7 @@ export default {
 
     const pieces = splitMultipart(originalQuestion);
     const useAnswerCache = !recentContext && !pieces.some(piece => directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
-    const knownEventAnswer = piece => recentContext ? null : scheduledMutationAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
+    const knownEventAnswer = piece => recentContext ? null : scheduledMutationAnswer(piece) || documentedTraitReleaseAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
