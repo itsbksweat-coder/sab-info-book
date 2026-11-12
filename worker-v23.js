@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v42";
+const WORKER_CACHE_VERSION = "v43";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1447,7 +1447,15 @@ function ogBrainrotAnswer(question) {
     .replace(/^the /, "")
     .replace(/ (?:added to|released in|in) (?:the game|sab|steal a brainrot)$/, "")
     .replace(/ (?:ever )?(?:added|released)$/, "")
-    .replace(/\bog rarity\b/, "og");
+    .replace(/\bog rarity\b/, "og")
+    .replace(/^(og(?: brainrot)?) (?:was )?(?:added|released|came) (first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th))$/, "$2 $1");
+  const releaseOrdinal = q.match(/^(first|second|third|fourth|fifth|sixth|1st|2nd|3rd|4th|5th|6th)(?: ever| added| released)? og(?: brainrot)?$/);
+  if (releaseOrdinal) {
+    const ordinal = releaseOrdinal[1];
+    const index = /^\d/.test(ordinal) ? Number(ordinal[0])-1
+      : ["first","second","third","fourth","fifth","sixth"].indexOf(ordinal);
+    return OG_RELEASE_ORDER[index] || null;
+  }
   const match = q.match(/^(?:(2nd|3rd|4th|5th|6th|second|third|fourth|fifth|sixth) )?(first(?: ever| added| released)?|oldest|earliest|latest|newest|last|best|strongest|highest income|worst|weakest|lowest income) og(?: brainrot)?$/);
   if (!match) return null;
   const rank = ["second","third","fourth","fifth","sixth"].indexOf(match[1]) + 2;
