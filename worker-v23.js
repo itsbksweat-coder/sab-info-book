@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v39";
+const WORKER_CACHE_VERSION = "v40";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1507,12 +1507,27 @@ function wikiMultiplierAnswer(question) {
   return entry ? (entry[1] == null ? "unknown" : String(entry[1])) : null;
 }
 
+const CURRENT_MUTATION_CLUES = new Set(["current mutation","active mutation","live mutation","mutation right now","mutation now","mutation today","mutation that is running now","mutation that is active now","mutation that is currently active","mutation is currently active","mutation is currently running","mutation is active","mutation is active now","mutation is active right now","mutation is running","mutation is running now","mutation is running right now","mutation is on right now","mutation is on now","mutation is live","mutation is live now","mutation is it right now","current mutation in the game","active mutation in the game","mutation are we on","mutation are we on now","mutation we are in right now","mutation we are on right now","todays mutation","today's mutation","today s mutation"]);
+const HACKER_CURRENT_START = Date.parse("2026-11-20T00:00:00-06:00");
+const HACKER_SCHEDULE_END = Date.parse("2026-11-21T00:00:00-06:00");
+
+function isCurrentMutationClue(question) {
+  const clue = normalizeDirect(question)
+    .replace(/^(?:(?:what|which)(?: is)?|whats|what's|name) /, "")
+    .replace(/^the /, "").replace(/ (?:called|name)$/, "");
+  return CURRENT_MUTATION_CLUES.has(clue);
+}
+
 function scheduledMutationAnswer(question) {
+  const now = Date.now();
+  if (isCurrentMutationClue(question) && now >= HACKER_CURRENT_START && now < HACKER_SCHEDULE_END) {
+    return "hacker";
+  }
   const q = normalizeDirect(question).replace(/\bnext upcoming mutation\b/g, "next mutation");
   const asksAboutHacker = /\bhacker mutation\b/.test(q);
   const asksAboutNext = /\b(?:next|upcoming) mutation\b/.test(q);
   if (!asksAboutHacker && !asksAboutNext) return null;
-  if (!asksAboutHacker && Date.now() >= Date.parse("2026-11-21T00:00:00-06:00")) return null;
+  if (!asksAboutHacker && now >= HACKER_SCHEDULE_END) return null;
   if (/\b(?:modifier|multiplier|odds|chance|income)\b/.test(q)) return null;
   if (/\b(?:what month|which month)\b/.test(q)) return "november";
   if (/\b(?:what year|which year)\b/.test(q)) return "2026";
@@ -2058,7 +2073,7 @@ export default {
     }
 
     const pieces = splitMultipart(originalQuestion);
-    const useAnswerCache = !recentContext && !/\bbrainrot (?:added|from the (?:latest|new) update)\b/.test(normalizeDirect(originalQuestion)) && !pieces.some(piece => directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
+    const useAnswerCache = !recentContext && !/\bbrainrot (?:added|from the (?:latest|new) update)\b/.test(normalizeDirect(originalQuestion)) && !pieces.some(piece => isCurrentMutationClue(piece) || directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
     const knownEventAnswer = piece => recentContext ? null : documentedTraitReleaseAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
     const isMultipart = pieces.length > 1;
 
