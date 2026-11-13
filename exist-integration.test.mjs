@@ -48,7 +48,7 @@ assert.match(infoBookText, /^Yin Yang \| 7\.5x \| 2025-09-27$/m);
 assert.match(infoBookText, /^TRAITS — Name \| multiplier \| release evidence$/m);
 assert.doesNotMatch(infoBookText, /PRIVATE/);
 assert.ok(infoBookText.split("\n").length >= 2000);
-assert.match(infoBookText, /^Brainrot God Lucky Block \| Tigroligre Frutonni \| 54%$/m);
+assert.match(infoBookText, /^Brainrot God Lucky Block \| Tigroligre Frutonni \| 54% \| \$60K\/s$/m);
 assert.match(infoBookText, /^74 \| 2026-11-07$/m);
 const fullPrompt = await (await run('/info-book/prompt')).text();
 assert.match(fullPrompt, /^You are TRACED RIDDLER/);
@@ -165,6 +165,8 @@ for (const [question, expected] of [
   ['how much does Los Dragons cost?', '425b'],
   ['cash needed for rebirth 1', '500k'],
   ['when did update 74 come out?', 'november 7 2026'],
+  ['what was update 2 called?', 'Bloodmoon Event'],
+  ['what does the Rainbow Machine require?', '25 Gold brainrots'],
   ['what does the Las Vaquitas Saturnitas ritual spawn?', 'Las Vaquitas Saturnitas'],
   ['chance of Tigroligre Frutonni from Brainrot God Lucky Block', '54%'],
   ['what is the best new brainrot added to the game', 'Balloon Baboon'],

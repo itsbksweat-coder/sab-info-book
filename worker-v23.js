@@ -2,7 +2,7 @@ import baseWorker from "./worker-v18.js";
 import {directoryMetadata, wikiTables} from "./wiki-reference.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v51";
+const WORKER_CACHE_VERSION = "v52";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1464,12 +1464,13 @@ function brainrotCard({name, income, release, rarity, cost, source, directorySou
 
 const REFERENCE_COLUMNS = {
   rebirth:"Level | required cash | required Brainrots | multiplier",
-  "lucky-blocks":"Block | drop | chance",
+  "lucky-blocks":"Block | drop | chance | wiki income at time of snapshot",
   rituals:"Ritual | spawn | requirements",
-  machines:"Machine | reported availability",
-  events:"Event | historical dates where supplied",
+  machines:"Machine | input when documented | availability in source snapshot",
+  events:"Event | wiki category | historical dates where supplied",
   "fuse-machine":"Historical fuse outputs and examples",
-  "update-log":"Update number | release date"
+  "update-log":"Update number | release date",
+  "update-themes":"Update number | documented theme"
 };
 const REFERENCE_SECTIONS = Object.fromEntries(Object.entries(wikiTables).map(([topic, rows]) => [
   topic, topic.toUpperCase() + " — " + REFERENCE_COLUMNS[topic] + "\n" + rows.map(row => row.join(" | ")).join("\n")
@@ -1495,7 +1496,7 @@ const STATIC_INFO_BOOK = [
   ...Object.values(REFERENCE_SECTIONS),
   "\nSOURCES",
   "https://steal-a-brainrot.org/brainrots — supplemental directory rarity, price, and acquisition tags",
-  ...Object.keys(wikiTables).map(topic => "https://stealabrainrot.wiki/wiki/" + topic + "/"),
+  ...Object.keys(wikiTables).filter(topic => topic !== "update-themes").map(topic => "https://stealabrainrot.wiki/wiki/" + topic + "/"),
   "\nSUPPORTED CLUES",
   "Income per second, minute, hour, or day. Compare two named Brainrots by base income or documented debut.",
   "Acquisition source, highest or lowest earner from a named source, and number of catalog entries from a named source.",
@@ -1557,6 +1558,18 @@ function catalogClueAnswer(question, recentContext) {
   if (update) {
     const row = wikiTables["update-log"].find(([number]) => number === (update[1] ?? update[2]));
     if (row) return formatReleaseDate(row[1]);
+  }
+  const updateTheme = clue.match(/^(?:theme|name) of update (\d+)$/)
+    || clue.match(/^update (\d+) called$/);
+  if (updateTheme) {
+    const row = wikiTables["update-themes"].find(([number]) => number === updateTheme[1]);
+    if (row) return row[1];
+  }
+  const machine = clue.match(/^what (?:does|do) (?:the )?(.+ machine) (?:require|need)$/)
+    || clue.match(/^requirements? (?:of|for) (?:the )?(.+ machine)$/);
+  if (machine) {
+    const row = wikiTables.machines.find(([name]) => brainrotKey(name) === machine[1]);
+    if (row && row[1] !== "see wiki") return row[1];
   }
   const ritual = clue.match(/^what (?:does|will) (?:the )?(.+ ritual) spawn$/);
   if (ritual) {
