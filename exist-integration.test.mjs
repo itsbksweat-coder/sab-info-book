@@ -27,10 +27,10 @@ const request = (path, init) => new Request('https://example.com' + path, init);
 const background = [];
 const ctx = {waitUntil: promise => background.push(promise)};
 const run = (path, init) => worker.fetch(request(path, init), env, ctx);
-const ask = (path, question) => run(path, {
+const ask = (path, question, context) => run(path, {
   method:'POST',
   headers:{'content-type':'application/json', 'x-riddler-token':'test-token'},
-  body:JSON.stringify({question})
+  body:JSON.stringify({question, context})
 });
 
 assert.equal((await run('/ws')).status, 404);
@@ -41,6 +41,9 @@ const infoBookResponse = await run('/info-book');
 assert.equal(infoBookResponse.status, 200);
 const infoBookText = await infoBookResponse.text();
 assert.match(infoBookText, /^Los Dragons \| 425m\/s \| 2026-09-12 \| OG Craft$/m);
+assert.match(infoBookText, /^67 \| 7\.5m\/s \| 2025-09-13 \| unknown$/m);
+assert.doesNotMatch(infoBookText, /^El Gato \|/m);
+assert.doesNotMatch(infoBookText, /^Extinct Cannelloni \|/m);
 assert.match(infoBookText, /^Yin Yang \| 7\.5x \| 2025-09-27$/m);
 assert.match(infoBookText, /^TRAITS — Name \| multiplier \| release evidence$/m);
 assert.doesNotMatch(infoBookText, /PRIVATE/);
@@ -50,6 +53,10 @@ assert.match(infoBookText, /^74 \| 2026-11-07$/m);
 const fullPrompt = await (await run('/info-book/prompt')).text();
 assert.match(fullPrompt, /^You are TRACED RIDDLER/);
 assert.ok(fullPrompt.endsWith(infoBookText));
+assert.match(fullPrompt, /Favorite mutation: Yin Yang/);
+assert.match(fullPrompt, /Car color: Red/);
+assert.equal((await (await ask('/ask', 'the avatar color', 'rbxthumb://type=AvatarHeadShot&id=2678001507&w=420&h=420')).json()).answer, 'red');
+assert.equal((await (await ask('/ask', 'the avatar color', 'rbxthumb://type=AvatarHeadShot&id=2678001507&w=420&h=420\nAvatar color: purple')).json()).answer, 'purple');
 assert.equal((await run('/health')).status, 200);
 assert.equal((await (await run('/exist/health')).json()).acceptsScans, false);
 assert.equal((await run('/ask', {method:'POST'})).status, 401);
@@ -152,6 +159,9 @@ for (const [question, expected] of [
   ['what is the p/s of Los Dragons?', '425m'],
   ['how much mps does Los Dragons make?', '425m'],
   ['what rarity is Los Dragons?', 'Secret'],
+  ['the rarity and income of Los Dragons', 'Secret425m'],
+  ['the income and rarity of Los Dragons', '425mSecret'],
+  ['my car color and my favorite color', 'redblue'],
   ['how much does Los Dragons cost?', '425b'],
   ['cash needed for rebirth 1', '500k'],
   ['when did update 74 come out?', 'november 7 2026'],
