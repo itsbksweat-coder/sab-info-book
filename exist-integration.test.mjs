@@ -37,6 +37,13 @@ assert.equal((await run('/ws')).status, 404);
 assert.equal((await run('/ws', {headers:{Upgrade:'websocket'}})).status, 404);
 assert.equal((await relay.fetch(request('/ws', {headers:{Upgrade:'websocket'}}))).status, 404);
 assert.equal((await run('/')).status, 405);
+const infoBookResponse = await run('/info-book');
+assert.equal(infoBookResponse.status, 200);
+const infoBookText = await infoBookResponse.text();
+assert.match(infoBookText, /^Los Dragons \| 425m\/s \| 2026-09-12 \| OG Craft$/m);
+assert.match(infoBookText, /^Yin Yang \| 7\.5x \| 2025-09-27$/m);
+assert.match(infoBookText, /^TRAITS — Name \| multiplier \| release evidence$/m);
+assert.doesNotMatch(infoBookText, /PRIVATE/);
 assert.equal((await run('/health')).status, 200);
 assert.equal((await (await run('/exist/health')).json()).acceptsScans, false);
 assert.equal((await run('/ask', {method:'POST'})).status, 401);
@@ -152,6 +159,13 @@ for (const [question, expected] of [
   ['how you obtain skibidi toilet', 'The Red Carpet'],
   ['where can I get Skibidi Toilet?', 'The Red Carpet'],
   ['where was Los Dragons obtained from?', "OG Craft"],
+  ['which brainrot makes more per second, Los Dragons or Balloon Baboon?', 'Los Dragons'],
+  ['which brainrot came out first, Los Dragons or Balloon Baboon?', 'Los Dragons'],
+  ['how much does Los Dragons make in one minute?', '25.5b'],
+  ['what is the release date of Los Dragons?', 'september 12 2026'],
+  ['when did the Yin Yang mutation come out?', 'september 27 2025'],
+  ['which mutation has the highest multiplier?', 'Eclipse'],
+  ['how many brainrots are from the Red Carpet?', String(infoBookText.split('\n').filter(line => line.endsWith(' | The Red Carpet')).length)],
   ['how much does Strawberry Elephant cost?', '750b'],
   ['what is the cheapest OG?', 'Skibidi Toilet'],
   ['how many OG Brainrots came before John Pork?', '4'],

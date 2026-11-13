@@ -1,7 +1,7 @@
 import baseWorker from "./worker-v18.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v48";
+const WORKER_CACHE_VERSION = "v49";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1254,6 +1254,12 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
       "\nBase prices: " + OG_PRICE_ORDER.map(name => name + " " + formatBrainrotIncome(OG_PRICES[name])).join(", ") +
       "\nOG rarity debuted in Update 14 on August 30, 2025. Interpret bare ordinals as release order, best and worst as base income, and cheapest and most expensive as purchase price. Ignore unreleased entries.");
   }
+  const paddedClues = " " + brainrotKey(clues) + " ";
+  const matchingFacts = BRAINROT_REFERENCE.filter(({name}) =>
+    paddedClues.includes(" " + brainrotKey(name) + " "));
+  if (matchingFacts.length) {
+    selected.push("=== MATCHING BRAINROT RECORDS ===\n" + matchingFacts.slice(0, 20).map(formatBrainrotReference).join("\n"));
+  }
   if (recentContext) selected.push("=== RECENT SAMMY CONTEXT ===\n" + recentContext);
   if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
   return selected.join("\n\n");
@@ -2027,13 +2033,127 @@ function brainrotObtainSource(question) {
   return BRAINROT_OBTAIN_SOURCES.get(name) || null;
 }
 
+const brainrotKey = value => normalizeDirect(value).replaceAll("'", "");
+const brainrotsByName = new Map(BRAINROT_CATALOG.map(entry => [brainrotKey(entry[0]), entry]));
+const sourcesByName = new Map([...BRAINROT_OBTAIN_SOURCES].map(([name, source]) => [brainrotKey(name), source]));
+const BRAINROT_REFERENCE = BRAINROT_CATALOG.map(([name, income, release]) => ({
+  name, income:income > 0 ? income : null, release, source:sourcesByName.get(brainrotKey(name)) ?? null
+}));
+
+function formatBrainrotReference({name, income, release, source}) {
+  return [name, income == null ? "unknown" : formatBrainrotIncome(income) + "/s", release ?? "unknown", source ?? "unknown"].join(" | ");
+}
+
+const STATIC_INFO_BOOK = [
+  "STEAL A BRAINROT INFO BOOK",
+  "Catalog snapshot. Unknown fields are unpublished or absent. Acquisition sources are imported from the supplied Animals snapshot. Voltra reads real SAB acquisition sources at runtime when available.",
+  "BRAINROTS — Name | base income per second | documented release (YYYY-MM-DD) | acquisition source",
+  ...BRAINROT_REFERENCE.map(formatBrainrotReference),
+  "\nMUTATIONS — Name | multiplier | documented release (YYYY-MM-DD)",
+  ...WIKI_MUTATIONS.map(([name, value, date]) => [name, value == null ? "unknown" : value + "x", date ?? "unknown"].join(" | ")),
+  "\nTRAITS — Name | multiplier | release evidence",
+  ...WIKI_TRAITS.map(([name, value]) => [name, value == null ? "unknown" : value + "x", TRAIT_RELEASES[name]?.join(": ") ?? "unknown"].join(" | ")),
+  "\nOG BRAINROTS — release order",
+  OG_RELEASE_ORDER.join(" | "),
+  "\nOG BRAINROTS — highest to lowest base income",
+  OG_INCOME_ORDER.join(" | "),
+  "\nOG BRAINROTS — base prices",
+  ...OG_PRICE_ORDER.map(name => name + " | " + formatBrainrotIncome(OG_PRICES[name])),
+  "\nSUPPORTED CLUES",
+  "Income per second, minute, hour, or day. Compare two named Brainrots by base income or documented debut.",
+  "Acquisition source, highest or lowest earner from a named source, and number of catalog entries from a named source.",
+  "Release date or date component, OG release order and rankings, mutation and trait multipliers, rankings, and release evidence.",
+  "Index exist counts come from the latest saved scan. The public game update timestamp is available through /updates/ws."
+].join("\n");
+
+function findBrainrot(label) {
+  const key = brainrotKey(label).replace(/^the /, "");
+  return brainrotsByName.get(key) || brainrotsByName.get(key.replace(/ brainrot$/, ""));
+}
+
+function formatReleaseDate(value, format) {
+  if (!value) return "unknown";
+  const date = new Date(value + "T12:00:00Z");
+  const month = new Intl.DateTimeFormat("en-US", {timeZone:"UTC", month:"long"}).format(date).toLowerCase();
+  const day = String(date.getUTCDate());
+  const year = String(date.getUTCFullYear());
+  if (format === "month") return month;
+  if (format === "day") return day;
+  if (format === "year") return year;
+  if (format === "month day") return month + day;
+  if (format === "month day year") return month + day + year;
+  return [month, day, year].join(" ");
+}
+
+function catalogClueAnswer(question, recentContext) {
+  if (recentContext) return null;
+  const clue = brainrotKey(question).replace(/^(?:what is|what was|whats|tell me) /, "").replace(/^the /, "");
+  const multiplier = clue.match(/^(?:which )?(mutation|trait) (?:has|gives) (?:the )?(highest|lowest) (?:income )?multiplier$/)
+    || clue.match(/^(highest|lowest) (mutation|trait) multiplier$/);
+  if (multiplier) {
+    const [, first, second] = multiplier;
+    const catalog = [first, second].includes("trait") ? WIKI_TRAITS : WIKI_MUTATIONS.filter(([name]) => name !== "Default");
+    const values = catalog.filter(([, value]) => value != null);
+    const extreme = [first, second].includes("highest") ? Math.max : Math.min;
+    const value = extreme(...values.map(([, factor]) => factor));
+    return values.filter(([, factor]) => factor === value).map(([name]) => name).join(", ");
+  }
+  const comparison = clue.match(/^which (?:brainrot )?(?:makes|earns|generates|produces) (more|less)(?: per second)? (.+) (?:or|vs|versus) (.+)$/);
+  if (comparison) {
+    const left = findBrainrot(comparison[2]);
+    const right = findBrainrot(comparison[3]);
+    if (!left || !right || left[1] <= 0 || right[1] <= 0) return null;
+    if (left[1] === right[1]) return "tie";
+    return ((left[1] > right[1]) === (comparison[1] === "more") ? left : right)[0];
+  }
+  const order = clue.match(/^which (?:brainrot )?(?:released|came out|was added) (first|earlier|later) (.+) (?:or|vs|versus) (.+)$/);
+  if (order) {
+    const left = findBrainrot(order[2]);
+    const right = findBrainrot(order[3]);
+    if (!left?.[2] || !right?.[2]) return null;
+    if (left[2] === right[2]) return "tie";
+    return ((left[2] < right[2]) === (order[1] !== "later") ? left : right)[0];
+  }
+  const time = clue.match(/^how much (?:money |cash )?does (.+) (?:make|earn|generate|produce) (?:in |per )(?:a |one )?(minute|hour|day)$/);
+  if (time) {
+    const entry = findBrainrot(time[1]);
+    if (!entry || entry[1] <= 0) return null;
+    const seconds = {minute:60, hour:3600, day:86400};
+    return formatBrainrotIncome(entry[1] * seconds[time[2]]);
+  }
+  const source = clue.match(/^(?:which is (?:the )?)?(highest earning|lowest earning|best|worst) brainrot (?:from|obtained from) (.+)$/)
+    || clue.match(/^(how many) (?:catalog )?brainrots (?:are |were )?(?:from|obtained from) (.+)$/);
+  if (source) {
+    const sourceKey = brainrotKey(source[2]).replace(/^the /, "");
+    const entries = BRAINROT_REFERENCE.filter(row => row.source && brainrotKey(row.source).replace(/^the /, "") === sourceKey);
+    if (!entries.length) return null;
+    if (source[1] === "how many") return String(entries.length);
+    const ranked = entries.filter(row => row.income != null).sort((a, b) => a.income - b.income);
+    return (/lowest|worst/.test(source[1]) ? ranked[0] : ranked.at(-1))?.name ?? null;
+  }
+  const release = clue.match(/^(?:when did |when was |release date (?:of|for) )(.+?) (mutation|trait)(?: (?:come out|release|released|introduced|added))?$/)
+    || clue.match(/^release date (?:of|for) (.+)$/);
+  if (release) {
+    const name = brainrotKey(release[1]).replace(/^the /, "");
+    if (release[2] === "mutation") {
+      const row = WIKI_MUTATIONS.find(([label]) => brainrotKey(label).replaceAll(" ", "") === name.replaceAll(" ", ""));
+      return row ? formatReleaseDate(row[2]) : null;
+    }
+    if (release[2] === "trait") return documentedTraitReleaseAnswer(question);
+    const row = findBrainrot(name);
+    return row ? formatReleaseDate(row[2]) : null;
+  }
+  return null;
+}
+
 function brainrotFactAnswer(question, recentContext="") {
   const q = normalizeDirect(question.replace(/(?:\$|\bp)?\s*\/\s*s\b/gi, " per second "));
   const obtainSource = brainrotObtainSource(question);
   if (obtainSource) return obtainSource;
   const ogAnswer = ogBrainrotAnswer(question);
   if (ogAnswer) return ogAnswer;
-  const lookup = label => BRAINROT_CATALOG.find(([name]) => normalizeDirect(name) === label.replace(/^the /, "").replace(/ brainrot$/, ""));
+  const extraFact = catalogClueAnswer(question, recentContext);
+  if (extraFact) return extraFact;
   const rank = q.match(/^(?:(?:what is|whats|what's) )?(?:the )?(best|worst|strongest|weakest) (?:new )?brainrot (?:added (?:to|in) (?:the game|sab|the latest update)|from the (?:latest|new) update)$/);
   if (rank) {
     if (Date.now() >= LATEST_BRAINROTS_EXPIRES) return "unknown";
@@ -2043,25 +2163,16 @@ function brainrotFactAnswer(question, recentContext="") {
     || q.match(/^(?:what is |whats |what's )?(?:the )?(?:base )?(?:income|generation) (?:per second )?(?:of|for) (.+)$/)
     || q.match(/^how much does (.+) (?:do|make|earn|generate|produce) per second$/);
   if (income) {
-    const entry = lookup(income[1]);
+    const entry = findBrainrot(income[1]);
     return entry && !recentContext ? formatBrainrotIncome(entry[1]) : null;
   }
   const release = q.match(/^(?:what (?:is|was) )?(?:the )?(month (?:and )?(?:the )?day(?: (?:and )?(?:the )?year)?|month|year|day) (?:of |that |when )?(?:the )?(.+) (?:was )?(?:released|came out|come out|added|introduced)$/)
     || q.match(/^(when) (?:did|was) (?:the )?(.+) (?:was )?(?:released|release|came out|come out|added|introduced)$/);
   if (!release || /\b(?:mutation|trait)\b/.test(release[2])) return null;
-  const entry = lookup(release[2]);
+  const entry = findBrainrot(release[2]);
   if (!entry) return null;
-  if (!entry[2]) return "unknown";
-  const date = new Date(entry[2] + "T12:00:00Z");
-  const month = new Intl.DateTimeFormat("en-US", {timeZone:"UTC", month:"long"}).format(date).toLowerCase();
-  const day = String(date.getUTCDate());
-  const year = String(date.getUTCFullYear());
   const format = release[1];
-  if (format === "when") return month + " " + day + " " + year;
-  if (format === "month") return month;
-  if (format === "day") return day;
-  if (format === "year") return year;
-  return month + day + (format.includes("year") ? year : "");
+  return formatReleaseDate(entry[2], format.startsWith("month ") ? (format.includes("year") ? "month day year" : "month day") : format);
 }
 
 function mutationMonthDayAnswer(question) {
@@ -2590,6 +2701,12 @@ export default {
     try {
       const url = new URL(request.url);
 
+    if (url.pathname === "/info-book" && request.method === "GET") {
+      return new Response(STATIC_INFO_BOOK, {
+        headers:{"content-type":"text/plain; charset=UTF-8", "cache-control":"public, max-age=300"}
+      });
+    }
+
     if (url.pathname === "/health" && request.method === "GET") {
       return json({
         ok:true,
@@ -2678,6 +2795,8 @@ export default {
 
     const fullOgAnswer = ogBrainrotAnswer(originalQuestion);
     if (fullOgAnswer) return json({ok:true,answer:fullOgAnswer});
+    const fullCatalogAnswer = catalogClueAnswer(originalQuestion, recentContext);
+    if (fullCatalogAnswer) return json({ok:true,answer:fullCatalogAnswer});
     const pieces = splitMultipart(originalQuestion);
     const useAnswerCache = !recentContext && !/\bbrainrot (?:added|from the (?:latest|new) update)\b/.test(normalizeDirect(originalQuestion)) && !pieces.some(piece => isCurrentMutationClue(piece) || isNextMutationClue(piece) || directDateAnswer(piece) || /\b(?:next|upcoming) mutation\b/.test(normalizeDirect(piece)));
     const knownEventAnswer = piece => recentContext ? null : documentedTraitReleaseAnswer(piece) || wikiMultiplierAnswer(piece) || eventRiddleAnswers.get(normalizeDirect(piece));
