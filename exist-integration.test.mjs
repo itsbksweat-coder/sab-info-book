@@ -44,6 +44,12 @@ assert.match(infoBookText, /^Los Dragons \| 425m\/s \| 2026-09-12 \| OG Craft$/m
 assert.match(infoBookText, /^Yin Yang \| 7\.5x \| 2025-09-27$/m);
 assert.match(infoBookText, /^TRAITS — Name \| multiplier \| release evidence$/m);
 assert.doesNotMatch(infoBookText, /PRIVATE/);
+assert.ok(infoBookText.split("\n").length >= 2000);
+assert.match(infoBookText, /^Brainrot God Lucky Block \| Tigroligre Frutonni \| 54%$/m);
+assert.match(infoBookText, /^74 \| 2026-11-07$/m);
+const fullPrompt = await (await run('/info-book/prompt')).text();
+assert.match(fullPrompt, /^You are TRACED RIDDLER/);
+assert.ok(fullPrompt.endsWith(infoBookText));
 assert.equal((await run('/health')).status, 200);
 assert.equal((await (await run('/exist/health')).json()).acceptsScans, false);
 assert.equal((await run('/ask', {method:'POST'})).status, 401);
@@ -141,6 +147,16 @@ for (const [question, expected] of [
   ['how much per second does los dragons do', '425m'],
   ['how much p/s does los dragons do', '425m'],
   ['how much $/s does Los Dragons do', '425m'],
+  ['how much p/s does Los Dragons do in the game?', '425m'],
+  ['Los Dragons p/s', '425m'],
+  ['what is the p/s of Los Dragons?', '425m'],
+  ['how much mps does Los Dragons make?', '425m'],
+  ['what rarity is Los Dragons?', 'Secret'],
+  ['how much does Los Dragons cost?', '425b'],
+  ['cash needed for rebirth 1', '500k'],
+  ['when did update 74 come out?', 'november 7 2026'],
+  ['what does the Las Vaquitas Saturnitas ritual spawn?', 'Las Vaquitas Saturnitas'],
+  ['chance of Tigroligre Frutonni from Brainrot God Lucky Block', '54%'],
   ['what is the best new brainrot added to the game', 'Balloon Baboon'],
   ['the worst brainrot added to the game', 'Bling Luming'],
   ['what was the first added og brainrot added to sab', 'Strawberry Elephant'],

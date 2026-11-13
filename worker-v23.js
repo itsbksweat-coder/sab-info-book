@@ -1,7 +1,8 @@
 import baseWorker from "./worker-v18.js";
+import {directoryMetadata, wikiTables} from "./wiki-reference.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v49";
+const WORKER_CACHE_VERSION = "v50";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1258,7 +1259,13 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
   const matchingFacts = BRAINROT_REFERENCE.filter(({name}) =>
     paddedClues.includes(" " + brainrotKey(name) + " "));
   if (matchingFacts.length) {
-    selected.push("=== MATCHING BRAINROT RECORDS ===\n" + matchingFacts.slice(0, 20).map(formatBrainrotReference).join("\n"));
+    selected.push("=== MATCHING BRAINROT RECORDS ===\n" + matchingFacts.slice(0, 20).flatMap(brainrotCard).join("\n"));
+  }
+  for (const [topic, section] of Object.entries(REFERENCE_SECTIONS)) {
+    const terms = topic.replaceAll("-", " ");
+    if (paddedClues.includes(" " + terms + " ") || paddedClues.includes(" " + terms.replace(/s$/, "") + " ")) {
+      selected.push(selectInfoBookContext(clues, section, 3000));
+    }
   }
   if (recentContext) selected.push("=== RECENT SAMMY CONTEXT ===\n" + recentContext);
   if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
@@ -2035,20 +2042,60 @@ function brainrotObtainSource(question) {
 
 const brainrotKey = value => normalizeDirect(value).replaceAll("'", "");
 const brainrotsByName = new Map(BRAINROT_CATALOG.map(entry => [brainrotKey(entry[0]), entry]));
+const directoryByName = new Map(directoryMetadata.map(row => [brainrotKey(row[0]), row]));
+for (const [name, , , income, date] of directoryMetadata) {
+  const key = brainrotKey(name);
+  if (!brainrotsByName.has(key) && income > 0) {
+    brainrotsByName.set(key, [name, income, /^\d{4}-\d{2}-\d{2}$/.test(date) && date >= "2025-05-15" ? date : null]);
+  }
+}
 const sourcesByName = new Map([...BRAINROT_OBTAIN_SOURCES].map(([name, source]) => [brainrotKey(name), source]));
-const BRAINROT_REFERENCE = BRAINROT_CATALOG.map(([name, income, release]) => ({
-  name, income:income > 0 ? income : null, release, source:sourcesByName.get(brainrotKey(name)) ?? null
-}));
+const BRAINROT_REFERENCE = [...brainrotsByName.values()].map(([name, income, release]) => {
+  const [, rarity, cost, directoryIncome, , directorySources] = directoryByName.get(brainrotKey(name)) ?? [];
+  return {name, income:income > 0 ? income : null, release, rarity, cost:OG_PRICES[name] ?? cost,
+    directoryIncome, directorySources, source:sourcesByName.get(brainrotKey(name)) ?? null};
+});
 
 function formatBrainrotReference({name, income, release, source}) {
   return [name, income == null ? "unknown" : formatBrainrotIncome(income) + "/s", release ?? "unknown", source ?? "unknown"].join(" | ");
 }
+
+function brainrotCard({name, income, release, rarity, cost, source, directorySources, directoryIncome}) {
+  const lines = [
+    "Brainrot: " + name,
+    "Base income per second: " + (income == null ? "unknown" : formatBrainrotIncome(income) + "/s (" + income + ")"),
+    "Rarity: " + (rarity ?? "unknown"),
+    "Base purchase price: " + (cost > 0 ? formatBrainrotIncome(cost) : "unknown"),
+    "Documented debut: " + (release ?? "unknown"),
+    "Animals acquisition source: " + (source ?? "unknown")
+  ];
+  if (directorySources?.length) lines.push("Directory acquisition tags: " + directorySources.join(", "));
+  if (directoryIncome > 0 && income != null && directoryIncome !== income) {
+    lines.push("Directory reports " + formatBrainrotIncome(directoryIncome) + "/s. Keep the game snapshot value above unless real SAB supplies a live value.");
+  }
+  return lines;
+}
+
+const REFERENCE_COLUMNS = {
+  rebirth:"Level | required cash | required Brainrots | multiplier",
+  "lucky-blocks":"Block | drop | chance",
+  rituals:"Ritual | spawn | requirements",
+  machines:"Machine | reported availability",
+  events:"Event | historical dates where supplied",
+  "fuse-machine":"Historical fuse outputs and examples",
+  "update-log":"Update number | release date"
+};
+const REFERENCE_SECTIONS = Object.fromEntries(Object.entries(wikiTables).map(([topic, rows]) => [
+  topic, topic.toUpperCase() + " — " + REFERENCE_COLUMNS[topic] + "\n" + rows.map(row => row.join(" | ")).join("\n")
+]));
 
 const STATIC_INFO_BOOK = [
   "STEAL A BRAINROT INFO BOOK",
   "Catalog snapshot. Unknown fields are unpublished or absent. Acquisition sources are imported from the supplied Animals snapshot. Voltra reads real SAB acquisition sources at runtime when available.",
   "BRAINROTS — Name | base income per second | documented release (YYYY-MM-DD) | acquisition source",
   ...BRAINROT_REFERENCE.map(formatBrainrotReference),
+  "\nBRAINROT FACT CARDS",
+  ...BRAINROT_REFERENCE.flatMap(brainrotCard),
   "\nMUTATIONS — Name | multiplier | documented release (YYYY-MM-DD)",
   ...WIKI_MUTATIONS.map(([name, value, date]) => [name, value == null ? "unknown" : value + "x", date ?? "unknown"].join(" | ")),
   "\nTRAITS — Name | multiplier | release evidence",
@@ -2059,12 +2106,29 @@ const STATIC_INFO_BOOK = [
   OG_INCOME_ORDER.join(" | "),
   "\nOG BRAINROTS — base prices",
   ...OG_PRICE_ORDER.map(name => name + " | " + formatBrainrotIncome(OG_PRICES[name])),
+  ...Object.values(REFERENCE_SECTIONS),
+  "\nSOURCES",
+  "https://steal-a-brainrot.org/brainrots — supplemental directory rarity, price, and acquisition tags",
+  ...Object.keys(wikiTables).map(topic => "https://stealabrainrot.wiki/wiki/" + topic + "/"),
   "\nSUPPORTED CLUES",
   "Income per second, minute, hour, or day. Compare two named Brainrots by base income or documented debut.",
   "Acquisition source, highest or lowest earner from a named source, and number of catalog entries from a named source.",
   "Release date or date component, OG release order and rankings, mutation and trait multipliers, rankings, and release evidence.",
   "Index exist counts come from the latest saved scan. The public game update timestamp is available through /updates/ws."
 ].join("\n");
+
+const FULL_REFERENCE_PROMPT = [
+  STORED_AI_PROMPT,
+  "REFERENCE USE",
+  "Use the records below as lookup data. Use only records relevant to the clue.",
+  "For base income clues, p/s, $/s, and MPS mean income per second. Return compact lowercase values such as 425m and 545.5m.",
+  "Use live real-SAB Animals data when available. Otherwise use the base income printed on the fact card. Directory conflicts are recorded as source notes.",
+  "Distinguish a Brainrot's base income, purchase price, rarity, acquisition source, and exist count.",
+  "Lucky block percentages refer to the named block. Historical fuse rows refer to the machine described in the source.",
+  "A listed event or machine does not establish that it is active right now.",
+  "For multipart clues, resolve each part independently and combine answers in clue order.",
+  STATIC_INFO_BOOK
+].join("\n\n");
 
 function findBrainrot(label) {
   const key = brainrotKey(label).replace(/^the /, "");
@@ -2088,6 +2152,37 @@ function formatReleaseDate(value, format) {
 function catalogClueAnswer(question, recentContext) {
   if (recentContext) return null;
   const clue = brainrotKey(question).replace(/^(?:what is|what was|whats|tell me) /, "").replace(/^the /, "");
+  const property = clue.match(/^(?:rarity|price|cost) (?:of|for) (.+)$/)
+    || clue.match(/^how much does (.+) cost$/)
+    || clue.match(/^what rarity is (.+)$/);
+  if (property) {
+    const row = findBrainrot(property[1]);
+    const [, rarity, price] = directoryByName.get(brainrotKey(row?.[0])) ?? [];
+    if (/\brarity\b/.test(clue.split(property[1])[0])) return rarity ?? null;
+    return price > 0 ? formatBrainrotIncome(price) : null;
+  }
+  const rebirth = clue.match(/^(?:cash|money|multiplier) (?:needed )?(?:for|at) rebirth (\d+)$/);
+  if (rebirth) {
+    const row = wikiTables.rebirth.find(([level]) => level === rebirth[1]);
+    if (!row) return null;
+    return clue.startsWith("multiplier") ? row[3].replace(/^x/i, "") : row[1].replace(/[^\w.]/g, "").toLowerCase();
+  }
+  const update = clue.match(/^(?:when did update (\d+) (?:release|come out)|release date of update (\d+))$/);
+  if (update) {
+    const row = wikiTables["update-log"].find(([number]) => number === (update[1] ?? update[2]));
+    if (row) return formatReleaseDate(row[1]);
+  }
+  const ritual = clue.match(/^what (?:does|will) (?:the )?(.+ ritual) spawn$/);
+  if (ritual) {
+    const row = wikiTables.rituals.find(([name]) => brainrotKey(name) === ritual[1]);
+    if (row) return row[1];
+  }
+  const odds = clue.match(/^(?:chance|odds) (?:of|for) (?:getting )?(.+) from (.+)$/);
+  if (odds) {
+    const row = wikiTables["lucky-blocks"].find(([block, drop]) =>
+      brainrotKey(block) === odds[2].replace(/^the /, "") && brainrotKey(drop) === odds[1]);
+    if (row) return row[2];
+  }
   const multiplier = clue.match(/^(?:which )?(mutation|trait) (?:has|gives) (?:the )?(highest|lowest) (?:income )?multiplier$/)
     || clue.match(/^(highest|lowest) (mutation|trait) multiplier$/);
   if (multiplier) {
@@ -2147,7 +2242,7 @@ function catalogClueAnswer(question, recentContext) {
 }
 
 function brainrotFactAnswer(question, recentContext="") {
-  const q = normalizeDirect(question.replace(/(?:\$|\bp)?\s*\/\s*s\b/gi, " per second "));
+  const q = normalizeDirect(question.replace(/(?:\$|\b(?:p|mps|ps|cash|money))?\s*\/\s*(?:sec(?:ond)?s?|s)\b|\b(?:mps|pps)\b/gi, " per second "));
   const obtainSource = brainrotObtainSource(question);
   if (obtainSource) return obtainSource;
   const ogAnswer = ogBrainrotAnswer(question);
@@ -2159,12 +2254,13 @@ function brainrotFactAnswer(question, recentContext="") {
     if (Date.now() >= LATEST_BRAINROTS_EXPIRES) return "unknown";
     return /best|strongest/.test(rank[1]) ? LATEST_BRAINROTS[0] : LATEST_BRAINROTS[1];
   }
-  const income = q.match(/^how much (?:money |cash )?per second does (.+) (?:do|make|earn|generate|produce)$/)
-    || q.match(/^(?:what is |whats |what's )?(?:the )?(?:base )?(?:income|generation) (?:per second )?(?:of|for) (.+)$/)
-    || q.match(/^how much does (.+) (?:do|make|earn|generate|produce) per second$/);
+  const income = q.match(/^how much (?:money |cash )?per second does (.+?)(?: (?:do|make|earn|generate|produce)(?: in (?:the game|sab))?)?$/)
+    || q.match(/^(?:what is |whats |what's )?(?:the )?(?:base )?(?:(?:income|generation) )?(?:per second )?(?:of|for) (.+)$/)
+    || q.match(/^how much (?:money |cash )?does (.+) (?:do|make|earn|generate|produce) per second$/)
+    || q.match(/^(?:(?:what is|whats|what's) (?:the )?)?(.+?)(?:'s)? (?:base income|generation|per second)$/);
   if (income) {
     const entry = findBrainrot(income[1]);
-    return entry && !recentContext ? formatBrainrotIncome(entry[1]) : null;
+    return entry && entry[1] > 0 && !recentContext ? formatBrainrotIncome(entry[1]) : null;
   }
   const release = q.match(/^(?:what (?:is|was) )?(?:the )?(month (?:and )?(?:the )?day(?: (?:and )?(?:the )?year)?|month|year|day) (?:of |that |when )?(?:the )?(.+) (?:was )?(?:released|came out|come out|added|introduced)$/)
     || q.match(/^(when) (?:did|was) (?:the )?(.+) (?:was )?(?:released|release|came out|come out|added|introduced)$/);
@@ -2255,7 +2351,7 @@ function scheduledMutationAnswer(question) {
 
 function looksSabSpecific(question) {
   const q = normalizeDirect(question);
-  return /\b(brainrot|mutation|rarity|fuse|craft|lucky block|admin abuse|sammy|meowl|jandelini|exist count|index|trait|base skin|red carpet|income per second|generation|og)\b/.test(q);
+  return /\b(brainrots?|mutations?|rarity|fuse|craft|lucky blocks?|rebirth|rituals?|machines?|admin abuse|sammy|meowl|jandelini|exist count|index|traits?|base skin|red carpet|income per second|generation|og)\b/.test(q);
 }
 
 function centralDateParts(date = new Date()) {
@@ -2701,8 +2797,9 @@ export default {
     try {
       const url = new URL(request.url);
 
-    if (url.pathname === "/info-book" && request.method === "GET") {
-      return new Response(STATIC_INFO_BOOK, {
+    if (["/info-book", "/info-book/prompt"].includes(url.pathname) && request.method === "GET") {
+      const text = url.pathname.endsWith("/prompt") ? FULL_REFERENCE_PROMPT : STATIC_INFO_BOOK;
+      return new Response(text, {
         headers:{"content-type":"text/plain; charset=UTF-8", "cache-control":"public, max-age=300"}
       });
     }
