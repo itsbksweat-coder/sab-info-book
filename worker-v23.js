@@ -2,7 +2,7 @@ import baseWorker from "./worker-v18.js";
 import {directoryMetadata, wikiTables} from "./wiki-reference.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v52";
+const WORKER_CACHE_VERSION = "v53";
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -1138,6 +1138,12 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
     }
   }
   if (recentContext) selected.push("=== RECENT CLIENT DATA ===\n" + recentContext);
+  const updateNumbers = [...new Set([...question.matchAll(/\bupdate (\d+)\b/g)].map(match => String(Number(match[1]))))];
+  for (const number of updateNumbers) {
+    const page = wikiTables["update-pages"].find(([id]) => id === number);
+    if (page) selected.push("=== UPDATE " + number + " ===\n" + page.slice(1).join(" | ") +
+      "\nBrainrots listed in the update: " + updateBrainrotNames(number).join(", "));
+  }
   if (infoContext) selected.push("=== RELEVANT SAB INFO BOOK ===\n" + infoContext);
   return selected.join("\n\n");
 }
@@ -1470,7 +1476,9 @@ const REFERENCE_COLUMNS = {
   events:"Event | wiki category | historical dates where supplied",
   "fuse-machine":"Historical fuse outputs and examples",
   "update-log":"Update number | release date",
-  "update-themes":"Update number | documented theme"
+  "update-themes":"Update number | documented theme",
+  "update-pages":"Update number | date or TBA | article sections",
+  "update-brainrots":"Update number | matched real SAB Brainrot listed on the page"
 };
 const REFERENCE_SECTIONS = Object.fromEntries(Object.entries(wikiTables).map(([topic, rows]) => [
   topic, topic.toUpperCase() + " — " + REFERENCE_COLUMNS[topic] + "\n" + rows.map(row => row.join(" | ")).join("\n")
@@ -1496,7 +1504,8 @@ const STATIC_INFO_BOOK = [
   ...Object.values(REFERENCE_SECTIONS),
   "\nSOURCES",
   "https://steal-a-brainrot.org/brainrots — supplemental directory rarity, price, and acquisition tags",
-  ...Object.keys(wikiTables).filter(topic => topic !== "update-themes").map(topic => "https://stealabrainrot.wiki/wiki/" + topic + "/"),
+  ...Object.keys(wikiTables).filter(topic => !["update-themes", "update-pages", "update-brainrots"].includes(topic)).map(topic => "https://stealabrainrot.wiki/wiki/" + topic + "/"),
+  ...wikiTables["update-pages"].map(([number]) => "https://stealabrainrot.wiki/wiki/update-log/update-" + number.padStart(2, "0") + "/"),
   "\nSUPPORTED CLUES",
   "Income per second, minute, hour, or day. Compare two named Brainrots by base income or documented debut.",
   "Acquisition source, highest or lowest earner from a named source, and number of catalog entries from a named source.",
@@ -1536,6 +1545,10 @@ function formatReleaseDate(value, format) {
   return [month, day, year].join(" ");
 }
 
+function updateBrainrotNames(number) {
+  return wikiTables["update-brainrots"].filter(([id]) => id === number).map(([, name]) => name);
+}
+
 function catalogClueAnswer(question, recentContext) {
   if (recentContext) return null;
   const clue = brainrotKey(question).replace(/^(?:what is|what was|whats|tell me) /, "").replace(/^the /, "");
@@ -1556,8 +1569,14 @@ function catalogClueAnswer(question, recentContext) {
   }
   const update = clue.match(/^(?:when did update (\d+) (?:release|come out)|release date of update (\d+))$/);
   if (update) {
-    const row = wikiTables["update-log"].find(([number]) => number === (update[1] ?? update[2]));
-    if (row) return formatReleaseDate(row[1]);
+    const row = wikiTables["update-pages"].find(([number]) => number === String(Number(update[1] ?? update[2])));
+    if (row) return row[1] === "TBA" ? "unknown" : formatReleaseDate(row[1]);
+  }
+  const updateRoster = clue.match(/^(?:what|which) brainrots (?:were added|are listed) in update (\d+)$/)
+    || clue.match(/^(?:list )?(?:the )?brainrots (?:from|in) update (\d+)$/);
+  if (updateRoster) {
+    const names = updateBrainrotNames(String(Number(updateRoster[1])));
+    if (names.length) return names.join(", ");
   }
   const updateTheme = clue.match(/^(?:theme|name) of update (\d+)$/)
     || clue.match(/^update (\d+) called$/);
