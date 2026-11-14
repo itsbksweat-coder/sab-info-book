@@ -2,7 +2,25 @@ import baseWorker from "./worker-v18.js";
 import {directoryMetadata, wikiTables} from "./wiki-reference.js";
 export { ExistRelay } from "./worker-v18.js";
 
-const WORKER_CACHE_VERSION = "v53";
+const WORKER_CACHE_VERSION = "v54";
+
+const BROS_LEAKS = [
+  ["November 12, 2026 at 5:11 PM", "Scary Bros"],
+  ["November 12, 2026 at 5:13 PM", "Scorpi Bros"],
+  ["November 13, 2026 at 11:48 AM", null]
+];
+
+const SECRET_ADMIN_ABUSE_CONTEXT = [
+  "November 13, 2026 Secret Admin Abuse (America/Chicago)",
+  "Sammy's Discord leak order for this batch, earliest first:",
+  ...BROS_LEAKS.map(([time, name], index) =>
+    (index + 1) + ". " + time + " — " + (name || "Untitled teaser showing two noob-style figures, one wearing a Santa hat and festive lights.")),
+  "Riddle: what was the first bros brainrot i leaked",
+  "Answer: " + BROS_LEAKS[0][1],
+  "Riddle: what is the new machine coming in tomorrows admin abuse",
+  "Answer: Bros Machine. In this riddle, tomorrow meant November 14, 2026. The supplied image labels the machine Bros Machine. Its Discord post time and order within the leak batch are unknown.",
+  "Source: user-supplied screenshots and Secret Admin Abuse riddle transcript. Dates for the Discord messages are inferred from the event date and relative timestamps."
+].join("\n");
 
 // Public SAB Wiki tables checked November 11, 2026. Null means unpublished.
 // https://stealabrainrot.wiki/wiki/mutations/
@@ -950,6 +968,9 @@ INTERPRETATION
 - Treat spelling, capitalization, punctuation, apostrophes, minor grammar mistakes, singular/plural forms, aliases, abbreviations, and partial canonical names flexibly.
 - In Sammy/Eternal riddles, "my", "me", "I", "his", and "Sammy" refer to Sammy when context makes that clear.
 - Prefer canonical Brainrot, mutation, rarity, trait, update, event, machine, and item names from the Info Book.
+- For leak-order questions, identify the speaker, leak batch, and requested ordinal. Sort by original announcement time. Leak order, release order, and roster order are separate facts. Use the visible announcement title for a named leak. Keep an uncaptioned teaser unnamed when no name is supplied.
+- Resolve relative dates in quoted or historical riddles against the date the riddle was asked. For a live riddle, interpret "tomorrow" in America/Chicago. Treat scheduled machine names as specific to the named event. Prefer newer, explicitly dated corrections for the same event. Apply the archived Bros Machine answer to a relative-date clue only when tomorrow resolves to November 14, 2026 or the clue explicitly refers to that historical riddle.
+- Use a machine's exact displayed name for a machine-name clue. A preview establishes its name. Release status, recipes, mechanics, and availability require their own evidence.
 - A standalone number is literal. Never turn a bare number into a riddle. Preserve its digits exactly.
 - If asked for a name, return the name only. If asked for a count/number, return the number only. If asked for a mutation, return the mutation only.
 - For base income per second, use compact lowercase suffixes k, m, b, or t and preserve significant decimals, such as 425m or 545.5m.
@@ -1136,6 +1157,9 @@ function buildPromptContext(clues, {multipart=false, recentContext="", infoConte
     if (paddedClues.includes(" " + terms + " ") || paddedClues.includes(" " + terms.replace(/s$/, "") + " ")) {
       selected.push(selectInfoBookContext(clues, section, 3000));
     }
+  }
+  if (/\b(?:bros|scorpi|leaks?|leaked|machine|admin abuse)\b/.test(question)) {
+    selected.push("=== SECRET ADMIN ABUSE AND LEAK HISTORY ===\n" + SECRET_ADMIN_ABUSE_CONTEXT);
   }
   if (recentContext) selected.push("=== RECENT CLIENT DATA ===\n" + recentContext);
   const updateNumbers = [...new Set([...question.matchAll(/\bupdate (\d+)\b/g)].map(match => String(Number(match[1]))))];
@@ -1487,7 +1511,9 @@ const REFERENCE_SECTIONS = Object.fromEntries(Object.entries(wikiTables).map(([t
 const STATIC_INFO_BOOK = [
   "STEAL A BRAINROT INFO BOOK",
   "Catalog snapshot. Unknown fields are unpublished or absent. Roster, base income, prices, rarities, and acquisition fields come from the supplied real SAB Animals dump. Wiki records supplement documented dates and historical context. Voltra reads real SAB acquisition sources at runtime when available.",
-  "BRAINROTS — Name | base income per second | documented release (YYYY-MM-DD) | acquisition source",
+  "\nSECRET ADMIN ABUSE AND LEAK HISTORY",
+  SECRET_ADMIN_ABUSE_CONTEXT,
+  "\nBRAINROTS — Name | base income per second | documented release (YYYY-MM-DD) | acquisition source",
   ...BRAINROT_REFERENCE.map(formatBrainrotReference),
   "\nBRAINROT FACT CARDS",
   ...BRAINROT_REFERENCE.flatMap(brainrotCard),
@@ -1902,6 +1928,7 @@ function splitMultipart(question) {
   raw = raw.replace(/^\s*(?:riddle|question|clue)\s*(?:is)?\s*[:\-]\s*/i, "");
 
   raw = raw.replace(/\s*\d+\s*\/\s*\d+\s*[:\-]\s*/g, "\n");
+  raw = raw.replace(/\b((?:january|february|march|april|may|june|july|august|september|october|november|december) \d{1,2}),\s*(\d{4})\b/gi, "$1 $2");
 
   const sharedSubject = normalizeDirect(raw).match(/^(?:what (?:is|are) )?(?:the )?(rarity|income|base income|price|cost) and (?:the )?(rarity|income|base income|price|cost) (?:of|for) (.+)$/);
   if (sharedSubject && findBrainrot(sharedSubject[3])) {
@@ -1922,9 +1949,22 @@ function splitMultipart(question) {
   return pieces;
 }
 
+function brosLeakRiddleAnswer(question) {
+  const clue = normalizeDirect(question).replace(/^(?:riddle|question|clue)(?: is)? /, "");
+  const leak = clue.match(/^(?:(?:what|which) (?:was|is) )?(?:the )?(first|second) bros brainrot (?:that )?(?:i|sammy) leaked$/);
+  if (leak) return BROS_LEAKS[leak[1] === "first" ? 0 : 1][1].toLowerCase();
+
+  const asksTomorrow = /^(?:(?:what|which) is )?(?:the )?new machine (?:that is )?coming (?:in|for) tomorrow'?s admin abuse$/.test(clue);
+  const asksNovember14 = /^(?:(?:what|which) (?:is|was) )?(?:the )?new machine (?:(?:coming|announced) )?(?:in|for) (?:the )?november 14(?: 2026)? admin abuse$/.test(clue);
+  if (asksNovember14) return "bros machine";
+  if (!asksTomorrow) return null;
+  const date = centralDateParts();
+  return date.year === "2026" && date.month === "November" && date.day === "13" ? "bros machine" : null;
+}
+
 function isContextSensitive(question) {
   const clue = normalizeDirect(question);
-  return isLiveIndexQuestion(question) || /\b(?:it|its|this|that|current|currently|active|now|today|new|newest|latest|recent|shown|avatar|notification|upcoming|next)\b/.test(clue)
+  return isLiveIndexQuestion(question) || /\b(?:it|its|this|that|current|currently|active|now|today|new|newest|latest|recent|shown|avatar|notification|upcoming|next|tomorrow|leaked)\b/.test(clue)
     || isCurrentMutationClue(question) || isNextMutationClue(question) || Boolean(directDateAnswer(question));
 }
 
@@ -2341,6 +2381,9 @@ export default {
     const isMultipart = pieces.length > 1;
 
     if (!isMultipart) {
+      const leakAnswer = brosLeakRiddleAnswer(originalQuestion);
+      if (leakAnswer) return json({ok:true,answer:leakAnswer});
+
       const releaseDate = scheduledMutationAnswer(originalQuestion) || mutationMonthDayAnswer(originalQuestion) || brainrotFactAnswer(originalQuestion, recentContext);
       if (releaseDate) return json({ok:true,answer:releaseDate});
       const genericDirect = directGenericAnswer(originalQuestion);
@@ -2399,6 +2442,12 @@ export default {
 
         if (slots[i - 1] === "timcheese" && /^how much s does he do(?: in the game)?$/.test(normalizeDirect(piece))) {
           slots[i] = "5";
+          continue;
+        }
+
+        const leakAnswer = brosLeakRiddleAnswer(piece);
+        if (leakAnswer) {
+          slots[i] = leakAnswer;
           continue;
         }
 
