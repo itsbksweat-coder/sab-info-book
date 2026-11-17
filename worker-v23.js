@@ -1043,6 +1043,91 @@ KNOWN SAB RIDDLE FACTS
 - Pum Pum Pum is a reskin of Dug Dug Dug. Halloween is October 31.
 - Past event riddles used Eclipse for the new mutation, Phoenix for the best Fuse Brainrot, and Griffin for the strongest Series 2 minifigure. For current questions, use newer supplied game data when available.
 
+EVENT RESKIN RELATIONSHIPS — NOVEMBER 2026 USER CORRECTIONS
+These are user-supplied mappings, not an independently verified exhaustive database. Read each arrow as named event variant -> existing original or family; never reverse the direction. Named seasonal variants are distinct Brainrots, not mutations or traits. Event membership alone does not prove a reskin relationship. Prefer these explicit corrections over older conflicting reskin guesses.
+For "X is a reskin of what", answer the right-hand original when an exact original is supplied. For "the Christmas/Halloween/etc. version of X", select the left-hand name in the requested season. Multiple matching variants require a distinguishing clue; do not arbitrarily pick one.
+"Family" means thematic relation only, not a confirmed identical model or specific original. Do not promote family-only or unverified rows into verified exact-model claims. If the requested exact original is unknown, do not invent it. Keep the ordinary answer-only output contract and multipart order.
+
+Halloween:
+Spooky Spooky Sahur -> Tictac Sahur
+Zombie Tralala -> Tralalero Tralala
+Mummy Ambalabu -> Boneca Ambalabu
+La Vacca Jacko Linterino -> La Vacca Saturno Saturnita
+Cappuccino Clownino -> Cappuccino Assassino
+Frankentteo -> Matteo
+Trickolino -> Chachechi
+Pumpkini Spyderini -> Spyderini family (exact base model unverified)
+Eviledon -> Tralaledon
+Vampira Cappucina -> Ballerina Cappuccina
+Pot Pumpkin -> Pot Hotspot
+La Spooky Grande -> La Grande Combinasion
+Los Spooky Combinasionas -> Los Combinasionas family
+Mieteteira Bicicleteira -> Chicleteira Bicicleteira
+Dragon Skeletonini -> Dragon Cannelloni
+Sammyni Spookyni -> Sammyni Fattini (reported; not independently confirmed)
+
+Christmas / winter:
+Noobini Santanini -> Noobini Pizzanini
+Ballerina Peppermintina -> Ballerina Cappuccina
+Cocoa Assassino -> Cappuccino Assassino
+Reindeer Tralala -> Tralalero Tralala
+Santteo -> Matteo
+Pandanini Frostini -> Pandaccini Bananini (explicit user correction; wiki descriptions do not explicitly establish model lineage)
+Santa Hotspot -> Pot Hotspot
+Chicleteira Noelteira -> Chicleteira Bicicleteira
+Ginger Cisterna -> Tartaruga Cisterna
+La Vacca Prese Presente -> La Vacca Saturno Saturnita
+Buho de Noelo -> Buho de Fuego
+Dragon Gingerini -> Dragon Cannelloni
+Please my Present -> Chachechi
+La Jolly Grande -> La Grande Combinasion
+Los Jolly Combinasionas -> Los Combinasionas family
+Festive 67 -> 67
+Triplito Tralaleritos -> Tralaleritos family
+Noo my Present -> Noo my-series
+Jingle Jingle Sahur -> Sahur family
+Tree Tree Tree Sahur -> Sahur family
+List List List Sahur -> Sahur family
+Ho Ho Ho Sahur -> Sahur family
+Jolly Jolly Sahur -> Sahur family
+
+Easter:
+Bunny Tralala -> Tralalero Tralala
+Eggdin Egg Egg Dun -> Odin Din Din Dun
+Buntteo -> Matteo
+Easter Easter Easter Sahur -> Job Job Job Sahur
+Bunny Bunny Bunny Sahur -> Tung Tung Tung Sahur
+La Easter Grande -> La Grande Combinasion
+Noo my Eggs -> Noo my-series
+Los Bunitos -> Los-family variant (specific original unverified)
+
+Valentine's Day:
+Cupid Hotspot -> Pot Hotspot
+Love Love Love Sahur -> Sahur family
+Cupid Cupid Sahur -> Sahur family
+Chicleteira Cupideira -> Chicleteira Bicicleteira
+La Romantic Grande -> La Grande Combinasion
+Noo my Heart -> Noo my-series
+
+Other seasonal / event variants:
+La Lucky Grande -> La Grande Combinasion (St Patrick's / luck theme)
+La Summer Grande -> La Grande Combinasion (summer)
+La Anniversary Grande -> La Grande Combinasion (anniversary)
+Eid Eid Eid Sahur -> Sahur family (Eid)
+Luck Luck Luck Sahur -> Sahur family (luck event)
+
+Important direction checks: Cupid Hotspot is a reskin OF Pot Hotspot, not the other way around. Pandanini Frostini's user-corrected original is Pandaccini Bananini. Preserve the uncertainty notes above. This list excludes mutations, traits, and unrelated event-exclusive originals and is not guaranteed exhaustive.
+Source links supplied by the user (not independently checked in this update):
+https://stealabrainrot.wiki/wiki/christmas-index/
+https://stealabrainrot.wiki/wiki/halloween-index/
+https://stealabrainrot.wiki/wiki/easter-index/
+https://stealabrainrot.wiki/wiki/cupid-hotspot/
+https://stealabrainrot.wiki/wiki/santa-hotspot/
+https://stealabrainrot.wiki/wiki/please-my-present/
+https://stealabrainrot.wiki/wiki/easter-easter-easter-sahur/
+https://stealabrainrot.wiki/wiki/limited-quantity-brainrots/
+
+
 COMMON OBJECT COLORS
 - grass/leaves/tree/frog => green
 - sky/ocean/sea/water => blue
